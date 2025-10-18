@@ -1,0 +1,44 @@
+# Copyright (c) 2023, Motor Controller Project
+# SPDX-License-Identifier: Apache-2.0
+
+# Include Zephyr base Kconfig
+source "Kconfig.zephyr"
+
+menu "Display Configuration"
+
+choice FONT_CHOICE
+	prompt "Font Selection"
+	default FONT_8X8
+	help
+	  Select the font type for the display.
+
+config FONT_8X8
+	bool "8x8 Font"
+	help
+	  Use 8x8 pixel font for display. This font is smaller and allows
+	  more text to be displayed on the screen.
+
+config FONT_16X16
+	bool "16x16 Font"
+	help
+	  Use 16x16 pixel font for display. This font is larger and provides
+	  better readability but takes more screen space.
+
+endchoice
+
+config FONT_WIDTH
+	int
+	default 8 if FONT_8X8
+	default 16 if FONT_16X16
+
+config FONT_HEIGHT
+	int
+	default 8 if FONT_8X8
+	default 16 if FONT_16X16
+
+config FONT_SIZE
+	int
+	default 8 if FONT_8X8
+	default 16 if FONT_16X16
+
+endmenu
