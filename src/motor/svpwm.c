@@ -69,18 +69,14 @@ static void svpwm_duty_cycle_update(struct svpwm *pwm, uint8_t ch, float duty_cy
         return;
     }
 
-    /* 限制占空比范围 */
     if (duty_cycle < PWM_MIN_DUTY) {
         duty_cycle = PWM_MIN_DUTY;
     } else if (duty_cycle > PWM_MAX_DUTY) {
         duty_cycle = PWM_MAX_DUTY;
     }
 
-    /* 计算脉冲宽度 */
-    /* 使用计算得到的pwm_period（ns）作为周期值 */
     pulse_width = (uint32_t)(data->pwm_period * duty_cycle);
     
-    /* 确保脉冲宽度不超过周期值 */
     if (pulse_width > data->pwm_period) {
         pulse_width = data->pwm_period;
     }
@@ -88,7 +84,6 @@ static void svpwm_duty_cycle_update(struct svpwm *pwm, uint8_t ch, float duty_cy
     LOG_DBG("Using period %d ns for precise pulse width calculation: %d",
             data->pwm_period, pulse_width);
             
-    /* 使用pwm_set函数，传递以纳秒为单位的周期和脉冲宽度 */
     ret = pwm_set(data->info->dev, data->info->channels[ch].channel_id,
                   data->pwm_period, pulse_width, PWM_POLARITY_NORMAL);
     
@@ -97,7 +92,6 @@ static void svpwm_duty_cycle_update(struct svpwm *pwm, uint8_t ch, float duty_cy
         return;
     }
 
-    /* 保存占空比值 */
     switch (ch) {
         case 0:
             data->duty_u = duty_cycle;
@@ -116,22 +110,16 @@ static void svpwm_duty_cycle_update(struct svpwm *pwm, uint8_t ch, float duty_cy
             ch, duty_cycle, pulse_width);
 }
 
-/* 获取PWM预分频器值 */
 static uint8_t get_pwm_prescaler(const struct device *dev)
 {
-    /* 在实际应用中，应该从PWM设备驱动获取预分频器值 */
-    /* 这里暂时使用默认值0，对应设备树中的配置 */
     ARG_UNUSED(dev);
-    return 0; /* 对应设备树中的 st,prescaler = <0> */
+    return 0;
 }
 
-/* 检查是否为中心对齐计数模式 */
 static bool is_center_aligned_mode(const struct device *dev)
 {
-    /* 在实际应用中，应该从PWM设备驱动获取计数模式 */
-    /* 这里暂时返回true，对应设备树中的 STM32_TIM_COUNTERMODE_CENTER_UP_DOWN */
     ARG_UNUSED(dev);
-    return true; /* 对应中心对齐计数模式 */
+    return true; 
 }
 
 static const struct svpwm_ops ops = {
@@ -158,7 +146,6 @@ struct svpwm *svpwm_init(const struct pwm_info *info, uint16_t freq, uint16_t cy
         return NULL;
     }
 
-    /* 初始化数据结构 */
     memset(data, 0, sizeof(*data));
     data->info = info;
     data->freq = freq;
@@ -173,19 +160,15 @@ struct svpwm *svpwm_init(const struct pwm_info *info, uint16_t freq, uint16_t cy
     data->pwm_prescaler = get_pwm_prescaler(info->dev);
     data->center_aligned = is_center_aligned_mode(info->dev);
 
-    /* 计算PWM周期 */
     if (freq > 0) {
         data->pwm_period = (uint32_t)1000000000 / freq; /* 将Hz转换为ns */
-        
-        /* 如果提供了cycle参数（PWM计数器分辨率），设置cycle值 */
+
         if (cycle > 0) {
             data->cycle = cycle;
         } else {
             data->cycle = 0;
         }
         
-        /* 调用svpwm_set_frequency函数来设置频率和计算实际参数 */
-        /* 注意：这里需要将struct svpwm *转换为struct svpwm_data *来访问成员 */
         struct svpwm *pwm = &data->pwm;
         if (svpwm_set_frequency(pwm, freq) != 0) {
             LOG_ERR("Failed to set PWM frequency during initialization");
@@ -198,9 +181,7 @@ struct svpwm *svpwm_init(const struct pwm_info *info, uint16_t freq, uint16_t cy
         return NULL;
     }
 
-    /* 初始化PWM设备 */
     for (i = 0; i < info->nb_channels; i++) {
-        /* 配置使能引脚 */
         if (!gpio_is_ready_dt(&info->channels[i].en)) {
             LOG_ERR("GPIO port %s not ready", info->channels[i].en.port->name);
             k_free(data);
@@ -214,7 +195,6 @@ struct svpwm *svpwm_init(const struct pwm_info *info, uint16_t freq, uint16_t cy
             return NULL;
         }
 
-        /* 初始化PWM通道，设置初始占空比为0 */
         ret = pwm_set(data->info->dev, data->info->channels[i].channel_id,
                       data->pwm_period, 0, PWM_POLARITY_NORMAL);
         if (ret != 0) {
@@ -226,7 +206,6 @@ struct svpwm *svpwm_init(const struct pwm_info *info, uint16_t freq, uint16_t cy
         LOG_DBG("PWM channel %d configured", info->channels[i].channel_id);
     }
 
-    /* 设置操作函数 */
     data->pwm.ops = &ops;
     data->initialized = true;
 
@@ -236,37 +215,32 @@ struct svpwm *svpwm_init(const struct pwm_info *info, uint16_t freq, uint16_t cy
     return &data->pwm;
 }
 
-/* 计算SVPWM扇区 */
 static uint8_t svpwm_calculate_sector(float alpha, float beta)
 {
     uint8_t sector = 0;
     float v1, v2, v3;
     
-    /* Clarke变换后的电压分量 */
     v1 = beta;
     v2 = (-0.5f * beta + 0.866025f * alpha); /* 0.866025 ≈ sqrt(3)/2 */
     v3 = (-0.5f * beta - 0.866025f * alpha);
     
-    /* 判断扇区 */
     if (v1 > 0) sector |= 1;
     if (v2 > 0) sector |= 2;
     if (v3 > 0) sector |= 4;
     
-    /* 扇区映射 */
     switch (sector) {
-        case 3: sector = 1; break;  /* 0011 -> 扇区1 */
-        case 1: sector = 2; break;  /* 0001 -> 扇区2 */
-        case 5: sector = 3; break;  /* 0101 -> 扇区3 */
-        case 4: sector = 4; break;  /* 0100 -> 扇区4 */
-        case 6: sector = 5; break;  /* 0110 -> 扇区5 */
-        case 2: sector = 6; break;  /* 0010 -> 扇区6 */
-        default: sector = 0; break; /* 无效扇区 */
+        case 3: sector = 1; break;
+        case 1: sector = 2; break;
+        case 5: sector = 3; break;
+        case 4: sector = 4; break;
+        case 6: sector = 5; break;
+        case 2: sector = 6; break;
+        default: sector = 0; break;
     }
     
     return sector;
 }
 
-/* 计算SVPWM占空比 */
 static void svpwm_calculate_duty_cycles(float alpha, float beta, float *duty_u, float *duty_v, float *duty_w)
 {
     uint8_t sector;
@@ -274,15 +248,12 @@ static void svpwm_calculate_duty_cycles(float alpha, float beta, float *duty_u, 
     float t1, t2;
     float t_a, t_b, t_c;
     
-    /* 计算扇区 */
     sector = svpwm_calculate_sector(alpha, beta);
     
-    /* 计算中间变量 */
     x = beta;
     y = (0.5f * beta + 0.866025f * alpha);
     z = (0.5f * beta - 0.866025f * alpha);
     
-    /* 根据扇区计算t1和t2 */
     switch (sector) {
         case 1:
             t1 = z;
@@ -314,12 +285,10 @@ static void svpwm_calculate_duty_cycles(float alpha, float beta, float *duty_u, 
             break;
     }
     
-    /* 计算三相占空比 */
     t_a = (1.0f - t1 - t2) / 2.0f;
     t_b = t_a + t1;
     t_c = t_b + t2;
     
-    /* 根据扇区分配占空比 */
     switch (sector) {
         case 1:
             *duty_u = t_b;
@@ -358,7 +327,6 @@ static void svpwm_calculate_duty_cycles(float alpha, float beta, float *duty_u, 
             break;
     }
     
-    /* 限制占空比范围 */
     if (*duty_u < PWM_MIN_DUTY) *duty_u = PWM_MIN_DUTY;
     if (*duty_u > PWM_MAX_DUTY) *duty_u = PWM_MAX_DUTY;
     if (*duty_v < PWM_MIN_DUTY) *duty_v = PWM_MIN_DUTY;
@@ -367,7 +335,6 @@ static void svpwm_calculate_duty_cycles(float alpha, float beta, float *duty_u, 
     if (*duty_w > PWM_MAX_DUTY) *duty_w = PWM_MAX_DUTY;
 }
 
-/* 更新SVPWM输出 */
 void svpwm_update_output(struct svpwm *pwm, float alpha, float beta)
 {
     struct svpwm_data *data = CONTAINER_OF(pwm, struct svpwm_data, pwm);
@@ -378,13 +345,10 @@ void svpwm_update_output(struct svpwm *pwm, float alpha, float beta)
         return;
     }
     
-    /* 计算占空比 */
     svpwm_calculate_duty_cycles(alpha, beta, &duty_u, &duty_v, &duty_w);
     
-    /* 更新扇区 */
     data->sector = svpwm_calculate_sector(alpha, beta);
     
-    /* 更新PWM占空比 */
     data->pwm.ops->update(pwm, 0, duty_u);  /* U相 */
     data->pwm.ops->update(pwm, 1, duty_v);  /* V相 */
     data->pwm.ops->update(pwm, 2, duty_w);  /* W相 */
@@ -393,7 +357,6 @@ void svpwm_update_output(struct svpwm *pwm, float alpha, float beta)
             data->sector, duty_u, duty_v, duty_w);
 }
 
-/* 获取当前扇区 */
 uint8_t svpwm_get_sector(struct svpwm *pwm)
 {
     struct svpwm_data *data = CONTAINER_OF(pwm, struct svpwm_data, pwm);
@@ -405,7 +368,6 @@ uint8_t svpwm_get_sector(struct svpwm *pwm)
     return data->sector;
 }
 
-/* 获取当前占空比 */
 void svpwm_get_duty_cycles(struct svpwm *pwm, float *duty_u, float *duty_v, float *duty_w)
 {
     struct svpwm_data *data = CONTAINER_OF(pwm, struct svpwm_data, pwm);
@@ -422,7 +384,6 @@ void svpwm_get_duty_cycles(struct svpwm *pwm, float *duty_u, float *duty_v, floa
     if (duty_w) *duty_w = data->duty_w;
 }
 
-/* 设置PWM频率 */
 int svpwm_set_frequency(struct svpwm *pwm, uint16_t freq)
 {
     struct svpwm_data *data = CONTAINER_OF(pwm, struct svpwm_data, pwm);
@@ -435,29 +396,17 @@ int svpwm_set_frequency(struct svpwm *pwm, uint16_t freq)
         return -EINVAL;
     }
     
-    /* 更新频率 */
     data->freq = freq;
-    
-    /* 考虑PWM预分频器 */
+
     uint32_t pwm_clock_freq = data->system_clock_freq / (data->pwm_prescaler + 1);
-    
-    /* 考虑计数模式：中心对齐计数模式的频率是边沿对齐的一半 */
     uint32_t freq_divider = data->center_aligned ? 2 : 1;
-    
-    /* 如果cycle值已经设置且不为0，则使用已有的cycle值 */
-    /* 否则计算达到目标频率所需的cycle值 */
     uint32_t calculated_cycle;
     if (data->cycle > 0) {
-        /* 使用已设置的cycle值 */
         calculated_cycle = data->cycle;
         LOG_DBG("Using existing cycle value: %d", calculated_cycle);
     } else {
-        /* 计算达到目标频率所需的cycle值 */
-        /* 实际PWM频率 = PWM时钟频率 / (freq_divider * (cycle + 1)) */
-        /* 因此，cycle = (PWM时钟频率 / (freq_divider * 目标频率)) - 1 */
         calculated_cycle = (pwm_clock_freq / (freq_divider * freq)) - 1;
         
-        /* 限制cycle值，避免过大或过小 */
         if (calculated_cycle < 100) {
             calculated_cycle = 100; /* 最小cycle值 */
             LOG_WRN("Calculated cycle value too small, using minimum value: %d", calculated_cycle);
@@ -470,12 +419,9 @@ int svpwm_set_frequency(struct svpwm *pwm, uint16_t freq)
         data->cycle = calculated_cycle;
     }
     
-    /* 计算实际频率和周期 */
-    /* 考虑计数模式：中心对齐计数模式的频率是边沿对齐的一半 */
     uint32_t actual_freq = pwm_clock_freq / (freq_divider * (data->cycle + 1));
     uint32_t actual_period = (uint32_t)((uint64_t)(freq_divider * (data->cycle + 1)) * 1000000000 / pwm_clock_freq);
     
-    /* 使用实际周期 */
     data->pwm_period = actual_period;
     
     LOG_INF("SVPWM frequency: target=%d Hz, actual=%d Hz, period=%d ns, cycle=%d",
@@ -484,7 +430,6 @@ int svpwm_set_frequency(struct svpwm *pwm, uint16_t freq)
     return 0;
 }
 
-/* 获取PWM频率 */
 uint16_t svpwm_get_frequency(struct svpwm *pwm)
 {
     struct svpwm_data *data = CONTAINER_OF(pwm, struct svpwm_data, pwm);
@@ -496,7 +441,6 @@ uint16_t svpwm_get_frequency(struct svpwm *pwm)
     return data->freq;
 }
 
-/* 获取PWM周期计数值(cycle) */
 uint16_t svpwm_get_cycle(struct svpwm *pwm)
 {
     struct svpwm_data *data = CONTAINER_OF(pwm, struct svpwm_data, pwm);
@@ -508,7 +452,6 @@ uint16_t svpwm_get_cycle(struct svpwm *pwm)
     return data->cycle;
 }
 
-/* 设置PWM周期计数值(cycle) */
 int svpwm_set_cycle(struct svpwm *pwm, uint16_t cycle)
 {
     struct svpwm_data *data = CONTAINER_OF(pwm, struct svpwm_data, pwm);
@@ -517,22 +460,16 @@ int svpwm_set_cycle(struct svpwm *pwm, uint16_t cycle)
         return -EINVAL;
     }
     
-    /* 更新cycle值 */
     data->cycle = cycle;
     
-    /* 如果频率已设置，重新计算PWM周期 */
     if (data->freq > 0) {
-        /* 考虑PWM预分频器 */
         uint32_t pwm_clock_freq = data->system_clock_freq / (data->pwm_prescaler + 1);
         
-        /* 考虑计数模式：中心对齐计数模式的频率是边沿对齐的一半 */
         uint32_t freq_divider = data->center_aligned ? 2 : 1;
         
-        /* 计算实际频率和周期 */
         uint32_t actual_freq = pwm_clock_freq / (freq_divider * (cycle + 1));
         uint32_t actual_period = (uint32_t)((uint64_t)(freq_divider * (cycle + 1)) * 1000000000 / pwm_clock_freq);
         
-        /* 如果实际频率与目标频率差异较大，记录警告并更新频率 */
         if (actual_freq < data->freq * 0.9 || actual_freq > data->freq * 1.1) {
             LOG_WRN("Actual PWM frequency (%d Hz) differs significantly from target (%d Hz)",
                    actual_freq, data->freq);
@@ -540,7 +477,6 @@ int svpwm_set_cycle(struct svpwm *pwm, uint16_t cycle)
             data->freq = actual_freq;
         }
         
-        /* 使用实际周期 */
         data->pwm_period = actual_period;
         
         LOG_INF("PWM cycle updated to %d, target freq=%d Hz, actual freq=%d Hz, period=%d ns",

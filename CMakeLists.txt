@@ -6,15 +6,17 @@ project(motor_controller)
 target_include_directories(app PRIVATE inc inc/menu)
 
 target_sources(app PRIVATE
-    src/lcd_test.c
+    # src/lcd_test.c
     src/main.c
+    src/menu.c
     src/menu/menu.c
     src/menu/pannel.c
-    # src/motor/adc.c
-    # src/motor/speed.c
-    # src/motor/motor.c
-    # src/motor/svpwm.c
-    # src/motor/controller.c
+    src/motor/motor_menu.c
+    src/motor/adc.c
+    src/motor/speed.c
+    src/motor/motor.c
+    src/motor/svpwm.c
+    src/motor/controller.c
 )
 
 if(CONFIG_FONT_8X8)

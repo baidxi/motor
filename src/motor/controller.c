@@ -7,8 +7,6 @@
 
 #include <zephyr/logging/log.h>
 
-#include <stdlib.h>
-
 LOG_MODULE_REGISTER(controller, LOG_LEVEL_INF);
 
 struct motor_ctrl_data {
@@ -30,6 +28,8 @@ static void motor_start(struct motor_ctrl *ctrl)
         LOG_ERR("Invalid motor control data");
         return;
     }
+    
+    adc_start(data->adc);
     
     /* 开启所有PWM通道 */
     for (uint8_t i = 0; i < data->nb_channels; i++) {
@@ -71,21 +71,16 @@ struct motor_ctrl *motor_ctrl_init(const struct pwm_info *pwm_info, const struct
 
     data->adc = adc_init(adc_info);
     data->speed = speed_init(data->adc, &data->ctrl);
-    /* 计算达到20KHz频率所需的cycle值 */
-    /* 考虑PWM预分频器，这里假设预分频器值为0（不分频） */
-    uint32_t pwm_prescaler = 0; /* 对应设备树中的 st,prescaler = <0> */
+
+    uint32_t pwm_prescaler = 0; 
     uint32_t pwm_clock_freq = data->ctrl.system_clock_freq / (pwm_prescaler + 1);
     
-    /* 考虑计数模式：中心对齐计数模式的频率是边沿对齐的一半 */
-    bool center_aligned = true; /* 对应设备树中的 STM32_TIM_COUNTERMODE_CENTER_UP_DOWN */
+    bool center_aligned = true; 
     uint32_t freq_divider = center_aligned ? 2 : 1;
     
-    /* 实际PWM频率 = PWM时钟频率 / (freq_divider * (cycle + 1)) */
-    /* 因此，cycle = (PWM时钟频率 / (freq_divider * 目标频率)) - 1 */
     uint16_t target_freq = 20000; /* 目标频率20KHz */
     uint16_t cycle = (pwm_clock_freq / (freq_divider * target_freq)) - 1;
     
-    /* 限制cycle值，避免过大或过小 */
     if (cycle < 100) {
         cycle = 100; /* 最小cycle值 */
         LOG_WRN("Calculated cycle value too small, using minimum value: %d", cycle);
@@ -95,7 +90,7 @@ struct motor_ctrl *motor_ctrl_init(const struct pwm_info *pwm_info, const struct
     }
     
     LOG_INF("Initializing SVPWM with target frequency %d Hz, calculated cycle %d", target_freq, cycle);
-    /* 传递原始系统时钟频率，而不是已经考虑预分频器的频率 */
+
     data->svpwm = svpwm_init(pwm_info, target_freq, cycle, data->ctrl.system_clock_freq);
     data->motor = motor_init(data->speed, MOTOR_TYPE_BLDC, data->svpwm);
 
@@ -109,4 +104,10 @@ void ctrl_event_post(struct motor_ctrl *ctrl, uint32_t event)
     struct motor_ctrl_data *data = CONTAINER_OF(ctrl, struct motor_ctrl_data, ctrl);
 
     k_event_post(&data->event, event);
+}
+
+int motor_ctrl_speed_register(struct motor_ctrl *ctrl, struct adc_callback_t *callback)
+{
+     struct motor_ctrl_data *data = CONTAINER_OF(ctrl, struct motor_ctrl_data, ctrl);
+     return adc_register_callback(data->adc, callback);
 }

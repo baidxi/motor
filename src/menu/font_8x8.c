@@ -1,8 +1,6 @@
 #include <stdint.h>
 #include "menu/font_8x8.h"
 
-// This font table contains 95 printable ASCII characters from 0x20 (' ') to 0x7E ('~').
-// To get the font data for a character 'c', use font_8x8[c - 0x20].
 const uint8_t font_8x8[95][8] = {
     // 0x20 ' '
     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},

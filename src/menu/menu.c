@@ -5,51 +5,89 @@
 #include <zephyr/input/input.h>
 #include <zephyr/drivers/sensor.h>
 
+#include <zephyr/logging/log.h>
+
 #include <menu.h>
 #include <pannel.h>
 
+LOG_MODULE_REGISTER(menu, CONFIG_LOG_DEFAULT_LEVEL);
+
 #define MENU_STACK_SIZE 4096
-// 辅助函数：根据ID查找菜单项
-static struct menu_item_t *find_menu_item_by_id(struct menu_item_t *root, uint8_t id);
+#define MENU_GROUP_STACK_SIZE 8
 
 struct menu_t {
     struct menu_item_t *item;
+    struct menu_group_t *groups;
+    struct menu_group_t *main_group;
     struct pannel_t *pannel;
+    struct menu_group_t *group_stack[8];
+    int group_stack_top;
+    struct menu_item_t *item_nav_from;
+    struct menu_item_t *item_nav_to;
     k_tid_t tid;
     struct k_thread thread;
-    K_KERNEL_STACK_MEMBER(stack, MENU_STACK_SIZE);
+    K_KERNEL_STACK_MEMBER(stack, 4096);
     
-    // 菜单状态
     menu_state_t state;
     struct menu_item_t *current_item;
     struct menu_item_t *selected_item;
+    struct menu_item_t *editing_item;
+    struct k_sem render_sem;
+    struct k_mutex pannel_mutex;
+    struct k_msgq update_msgq;
     
-    // 输入设备
     const struct device *qdec_dev;
-    // const struct device *key1_dev;
-    // const struct device *key2_dev;
     const struct device *adc2_dev;
     
-    // 输入状态
     int32_t qdec_value;
     bool key1_pressed;
     bool key2_pressed;
     int16_t adc2_value;
     bool needs_render;
+    struct menu_group_t *group_to_refresh;
     struct sensor_trigger trigger;
 };
 
-static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
-                           uint16_t x, uint16_t y, bool selected)
+static struct menu_item_t *find_menu_item_by_id(struct menu_item_t *root, uint8_t id);
+static void menu_get_item_layout(struct menu_group_t *group, struct menu_item_t *item_to_find, uint16_t *out_x, uint16_t *out_y, uint16_t *out_w);
+static void menu_refresh_item_selection(struct menu_t *menu, struct menu_item_t *last_item, struct menu_item_t *current_item);
+static void menu_refresh_single_item_fast(struct menu_item_t *item);
+static void menu_render_item_value_only(struct menu_item_t *item);
+static void menu_update_group_visibility(struct menu_t *menu);
+static struct menu_group_t *find_group_by_bind_item(struct menu_t *menu, struct menu_item_t *item);
+
+
+static void menu_render_group_chrome(struct menu_t *menu, struct menu_group_t *group)
 {
-    if (!menu || !item || !menu->pannel) {
+    if (!menu || !group || !group->visible) {
         return;
     }
-    
-    // 根据样式确定颜色
+
+    pannel_render_rect(menu->pannel, group->x, group->y, group->width, group->height, group->color, false);
+
+    if (group->title[0] != '\0') {
+        size_t title_len = strlen((const char *)group->title);
+        uint16_t title_width = title_len * CONFIG_FONT_WIDTH;
+        uint16_t title_x = group->x + (group->width / 2) - (title_width / 2);
+        uint16_t gap_x = title_x - 2;
+        uint16_t gap_width = title_width + 4;
+        pannel_render_rect(menu->pannel, gap_x, group->y, gap_width, 1, COLOR_BLACK, true);
+        pannel_render_txt(menu->pannel, group->title, title_x, group->y - (CONFIG_FONT_HEIGHT / 2), COLOR_WHITE);
+    }
+}
+
+static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
+                           uint16_t x, uint16_t y, bool selected, uint16_t render_width)
+{
+    if (!menu || !item || !menu->pannel || !item->visible) {
+        return;
+    }
+
     uint16_t text_color = COLOR_WHITE;
     uint16_t bg_color = COLOR_BLACK;
-    
+    size_t name_len = 0;
+    uint16_t text_y = y + 2;
+
     if (selected) {
         text_color = COLOR_BLACK;
         bg_color = COLOR_WHITE;
@@ -58,44 +96,100 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
     } else if (item->style & MENU_STYLE_DISABLED) {
         text_color = COLOR_GRAY;
     }
-    
-    // 绘制背景
-    if (selected || (item->style & MENU_STYLE_BORDER)) {
-        // 确保name是有效的字符串
-        size_t name_len = 0;
-        if (item->name[0] != '\0') {
-            name_len = strlen((const char *)item->name);
-        }
-        pannel_render_rect(menu->pannel, x, y,
-                          CONFIG_FONT_WIDTH * name_len + 4,
-                          CONFIG_FONT_HEIGHT + 4, bg_color, true);
-    }
-    
-    // 绘制文本
-    uint16_t text_x = x + 2;
-    uint16_t text_y = y + 2;
-    
-    // 确保name是有效的字符串
-    size_t name_len = 0;
+
     if (item->name[0] != '\0') {
         name_len = strlen((const char *)item->name);
     }
-    
-    if (item->style & MENU_STYLE_CENTER) {
-        // 居中对齐
-        text_x = x + (CONFIG_FONT_WIDTH * name_len) / 2;
-    } else if (item->style & MENU_STYLE_RIGHT) {
-        // 右对齐
-        text_x = x + CONFIG_FONT_WIDTH * name_len;
+
+    uint16_t content_width = CONFIG_FONT_WIDTH * name_len;
+    char value_buf[16] = {0};
+
+    if (item->type == MENU_ITEM_TYPE_INPUT) {
+        int32_t value_to_display = (menu->editing_item == item) ? item->input.editing_value : item->input.value;
+        snprintf(value_buf, sizeof(value_buf), "%d", value_to_display);
+        strncpy(item->input.rendered_value_str, value_buf, sizeof(item->input.rendered_value_str) - 1);
+        item->input.rendered_value_str[sizeof(item->input.rendered_value_str) - 1] = '\0';
+        content_width += 5 + strlen(value_buf) * CONFIG_FONT_WIDTH;
+    } else if (item->style & MENU_STYLE_LABEL && item->label_cb) {
+        char label_buf[32] = {0};
+        item->label_cb(item, label_buf, sizeof(label_buf));
+        content_width += 1 + strlen(label_buf) * CONFIG_FONT_WIDTH;
     }
-    
-    // 确保name是有效的字符串
+
+    uint16_t box_width = (render_width > 0) ? render_width : content_width;
+
+    pannel_render_rect(menu->pannel, x - 2, y,
+                       box_width + 4,
+                       CONFIG_FONT_HEIGHT + 4, bg_color, true);
+
+    uint16_t text_x = x;
+    if (item->group && item->group->item_text_align) {
+         if (item->group->item_text_align & MENU_STYLE_CENTER) {
+            text_x = x + (box_width - content_width) / 2;
+        } else if (item->group->item_text_align & MENU_STYLE_RIGHT) {
+            text_x = x + box_width - content_width;
+        }
+    }
+
     if (item->name[0] != '\0') {
         pannel_render_txt(menu->pannel, (uint8_t *)item->name, text_x, text_y, text_color);
     }
+
+    if (item->style & MENU_STYLE_LABEL && item->label_cb) {
+        char label_buf[32] = {0};
+        item->label_cb(item, label_buf, sizeof(label_buf));
+        pannel_render_txt(menu->pannel, (uint8_t *)label_buf, text_x + name_len * CONFIG_FONT_WIDTH + 1, text_y, text_color);
+    } else if (item->type == MENU_ITEM_TYPE_INPUT) {
+        uint16_t value_x = text_x + name_len * CONFIG_FONT_WIDTH + 5;
+        pannel_render_txt(menu->pannel, (uint8_t *)value_buf, value_x, text_y, text_color);
+    }
 }
 
-// 辅助函数：渲染菜单
+static void menu_render_group(struct menu_t *menu, struct menu_group_t *group)
+{
+    if (!menu || !group || !group->visible) {
+        return;
+    }
+
+    menu_render_group_chrome(menu, group);
+
+    uint16_t max_item_width = 0;
+    uint16_t total_height = 0;
+    struct menu_item_t *item = group->items;
+    while (item) {
+        if (item->visible) {
+            size_t name_len = strlen((const char *)item->name);
+            uint16_t current_item_width = CONFIG_FONT_WIDTH * name_len;
+            if (item->type == MENU_ITEM_TYPE_INPUT) {
+                char value_buf[16] = {0};
+                int32_t value_to_display = (menu->editing_item == item) ? item->input.editing_value : item->input.value;
+                snprintf(value_buf, sizeof(value_buf), "%d", value_to_display);
+                current_item_width += 5 + strlen(value_buf) * CONFIG_FONT_WIDTH;
+            }
+            if (current_item_width > max_item_width) max_item_width = current_item_width;
+            total_height += CONFIG_FONT_HEIGHT + 5;
+        }
+        item = item->group_next;
+    }
+
+    uint16_t start_x = group->x + 5;
+    uint16_t start_y = group->y + 5;
+    if (group->align & MENU_ALIGN_V_CENTER) start_y = group->y + (group->height - total_height) / 2;
+    if (group->item_text_align & MENU_STYLE_CENTER) start_x = group->x + (group->width - max_item_width) / 2;
+    else if (group->item_text_align & MENU_STYLE_RIGHT) start_x = group->x + group->width - max_item_width - 5;
+
+    item = group->items;
+    uint16_t current_y = start_y;
+    while (item) {
+        if (item->visible) {
+            bool selected = (item == menu->current_item);
+            menu_render_item(menu, item, start_x, current_y, selected, max_item_width);
+            current_y += CONFIG_FONT_HEIGHT + 5;
+        }
+        item = item->group_next;
+    }
+}
+
 static void menu_render(struct menu_t *menu)
 {
     struct display_capabilities *caps;
@@ -104,102 +198,276 @@ static void menu_render(struct menu_t *menu)
         return;
     }
 
+    k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+
     pannel_get_capabilities(menu->pannel, &caps);
     
     pannel_render_clear(menu->pannel, COLOR_BLACK);
-    // 渲染当前菜单
-    if (menu->current_item) {
+
+    struct menu_group_t *group = menu->groups;
+    while (group) {
+        menu_render_group(menu, group);
+        group = group->next;
+    }
+
+    if (menu->group_stack_top == -1) {
         uint16_t y = 10;
         uint16_t x = 10;
-        
-        // 如果有父菜单，显示返回选项
-        if (menu->current_item->parent) {
-            pannel_render_txt(menu->pannel, (uint8_t *)"..", x, y, COLOR_WHITE);
-            y += CONFIG_FONT_HEIGHT + 5;
-        }
-        
-        // 渲染同级菜单项
-        struct menu_item_t *item = menu->current_item->parent ?
-                                  menu->current_item->parent->items :
-                                  menu->item;
-        
+        struct menu_item_t *item = menu->item;
         while (item) {
-            bool selected = (item == menu->current_item);
-            menu_render_item(menu, item, x, y, selected);
-            y += CONFIG_FONT_HEIGHT + 5;
-            
-            // 检查是否超出屏幕
-            if (y + CONFIG_FONT_HEIGHT > caps->y_resolution) {
-                break;
+            if (!item->group) {
+                bool selected = (item == menu->current_item);
+                menu_render_item(menu, item, x, y, selected, 0);
+                y += CONFIG_FONT_HEIGHT + 5;
+                if (y > caps->y_resolution) {
+                    break;
+                }
             }
-            
             item = item->next;
         }
     }
+
+    k_mutex_unlock(&menu->pannel_mutex);
 }
 
-// 辅助函数：处理输入事件
+static void menu_refresh_group(struct menu_t *menu, struct menu_group_t *group)
+{
+    if (!menu || !group || !group->visible) {
+        return;
+    }
+
+    k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+
+    pannel_render_rect(menu->pannel, group->x, group->y, group->width, group->height, COLOR_BLACK, true);
+
+    menu_render_group(menu, group);
+
+    k_mutex_unlock(&menu->pannel_mutex);
+}
+
+static void menu_refresh_group_items(struct menu_t *menu, struct menu_group_t *group)
+{
+    if (!menu || !group || !group->visible) {
+        return;
+    }
+
+    k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+
+    pannel_render_rect(menu->pannel, group->x + 1, group->y + 4, group->width - 2, group->height - 5, COLOR_BLACK, true);
+
+    uint16_t max_item_width = 0;
+    uint16_t total_height = 0;
+    struct menu_item_t *item = group->items;
+    while (item) {
+        if (item->visible) {
+            size_t name_len = strlen((const char *)item->name);
+            uint16_t current_item_width = CONFIG_FONT_WIDTH * name_len;
+            if (item->type == MENU_ITEM_TYPE_INPUT) {
+                char value_buf[16] = {0};
+                int32_t value_to_display = (menu->editing_item == item) ? item->input.editing_value : item->input.value;
+                snprintf(value_buf, sizeof(value_buf), "%d", value_to_display);
+                current_item_width += 5 + strlen(value_buf) * CONFIG_FONT_WIDTH;
+            }
+            if (current_item_width > max_item_width) max_item_width = current_item_width;
+            total_height += CONFIG_FONT_HEIGHT + 5;
+        }
+        item = item->group_next;
+    }
+
+    uint16_t start_x = group->x + 5;
+    uint16_t start_y = group->y + 5;
+    if (group->align & MENU_ALIGN_V_CENTER) start_y = group->y + (group->height - total_height) / 2;
+    if (group->item_text_align & MENU_STYLE_CENTER) start_x = group->x + (group->width - max_item_width) / 2;
+    else if (group->item_text_align & MENU_STYLE_RIGHT) start_x = group->x + group->width - max_item_width - 5;
+
+    item = group->items;
+    uint16_t current_y = start_y;
+    while (item) {
+        if (item->visible) {
+            bool selected = (item == menu->current_item);
+            menu_render_item(menu, item, start_x, current_y, selected, max_item_width);
+            current_y += CONFIG_FONT_HEIGHT + 5;
+        }
+        item = item->group_next;
+    }
+
+    k_mutex_unlock(&menu->pannel_mutex);
+}
+
 static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
 {
+    bool force_render = false;
+    struct menu_item_t *last_item;
+    menu_input_event_t ev = {0};
+    
     if (!menu || !event) {
         return;
     }
     
-    struct menu_item_t *last_item = menu->current_item;
+    last_item = menu->current_item;
     
     switch (event->type) {
         case INPUT_TYPE_QDEC:
-            // QDEC用于上下导航
-            if (event->value > 0) {
-                // 向下移动
-                if (menu->current_item && menu->current_item->next) {
-                    menu->current_item = menu->current_item->next;
+            if (menu->editing_item && menu->editing_item->input.dev == event->dev) {
+                if (menu->editing_item->input.cb && !menu->editing_item->input.cb(menu->editing_item, event)) {
+                    break;
                 }
-            } else if (event->value < 0) {
-                // 向上移动
-                if (menu->current_item && menu->current_item->prev) {
-                    menu->current_item = menu->current_item->prev;
+                menu->editing_item->input.editing_value += event->value > 0 ? menu->editing_item->input.step : -menu->editing_item->input.step;
+                if (menu->editing_item->input.editing_value > menu->editing_item->input.max) {
+                    menu->editing_item->input.editing_value = menu->editing_item->input.max;
+                } else if (menu->editing_item->input.editing_value < menu->editing_item->input.min) {
+                    menu->editing_item->input.editing_value = menu->editing_item->input.min;
+                }
+                force_render = true;
+            } else if (menu->group_stack_top > -1) {
+                if (event->value > 0) {
+                    struct menu_item_t *next_item = menu->current_item->group_next;
+                    while (next_item && ((next_item->style & MENU_STYLE_LABEL) || !next_item->visible)) {
+                        next_item = next_item->group_next;
+                    }
+                    if (next_item) {
+                        menu->current_item = next_item;
+                    }
+                } else if (event->value < 0) {
+                    struct menu_item_t *prev_item = menu->current_item->group_prev;
+                    while (prev_item && ((prev_item->style & MENU_STYLE_LABEL) || !prev_item->visible)) {
+                        prev_item = prev_item->group_prev;
+                    }
+                    if (prev_item) {
+                        menu->current_item = prev_item;
+                    }
+                }
+            } else {
+                if (event->value > 0) {
+                    struct menu_item_t *next_item = menu->current_item->next;
+                    while (next_item) {
+                        bool is_label = next_item->style & MENU_STYLE_LABEL;
+                        bool is_hidden = !next_item->visible;
+                        bool in_inactive_group = next_item->group && !next_item->group->always_visible && next_item->group->bind_item != NULL;
+                        if (is_label || is_hidden || in_inactive_group) {
+                            next_item = next_item->next;
+                        } else {
+                            break;
+                        }
+                    }
+                    if (next_item) {
+                        menu->current_item = next_item;
+                    }
+                } else if (event->value < 0) {
+                    struct menu_item_t *prev_item = menu->current_item->prev;
+                    while (prev_item) {
+                        bool is_label = prev_item->style & MENU_STYLE_LABEL;
+                        bool is_hidden = !prev_item->visible;
+                        bool in_inactive_group = prev_item->group && !prev_item->group->always_visible && prev_item->group->bind_item != NULL;
+                        if (is_label || is_hidden || in_inactive_group) {
+                            prev_item = prev_item->prev;
+                        } else {
+                            break;
+                        }
+                    }
+                    if (prev_item) {
+                        menu->current_item = prev_item;
+                    }
                 }
             }
             break;
-            
+
         case INPUT_TYPE_KEY1:
-            // KEY1用于选择/进入
             if (event->pressed) {
-                if (menu->current_item) {
-                    if (menu->current_item->items) {
-                        // 有子菜单，进入子菜单
-                        menu->current_item = menu->current_item->items;
+                if (menu->editing_item) {
+                    menu->editing_item->input.value = menu->editing_item->input.editing_value;
+                    if (menu->editing_item->input.cb) {
+                        if (menu->editing_item->input.cb(menu->editing_item, &ev))
+                        {
+                            menu->editing_item->input.value = ev.value;
+                        }
+                    }
+                    menu->editing_item = NULL;
+                    force_render = true;
+                } else if (menu->current_item) {
+                    if (menu->current_item->type == MENU_ITEM_TYPE_INPUT) {
+                        menu->editing_item = menu->current_item;
+                        menu->editing_item->input.editing_value = menu->editing_item->input.value;
+                        if (menu->editing_item->input.cb) {
+                            if (menu->editing_item->input.cb(menu->editing_item, &ev))
+                            {
+                                menu->editing_item->input.editing_value = ev.value;
+                            }
+                        }
+                        force_render = true;
                     } else {
-                        // 没有子菜单，执行回调
-                        if (menu->current_item->cb) {
+                        struct menu_group_t *bound_group = find_group_by_bind_item(menu, menu->current_item);
+                        if (bound_group) {
+                            bool already_active = false;
+                        if (menu->group_stack_top > -1) {
+                            if (menu->group_stack[menu->group_stack_top] == bound_group) {
+                                already_active = true;
+                            }
+                        }
+
+                        if (!already_active && menu->group_stack_top < (MENU_GROUP_STACK_SIZE - 1)) {
+                            menu->group_stack_top++;
+                            menu->group_stack[menu->group_stack_top] = bound_group;
+                            force_render = true;
+
+                            struct menu_item_t *first_item = bound_group->items;
+                            while(first_item && ((first_item->style & MENU_STYLE_LABEL) || !first_item->visible)) {
+                                first_item = first_item->group_next;
+                            }
+                            if (first_item) {
+                                menu->current_item = first_item;
+                            }
+                        }
+                        } else if (menu->current_item->items) {
+                            menu->current_item = menu->current_item->items;
+                        } else if (menu->current_item->cb) {
                             menu->current_item->cb(menu->current_item, menu->current_item->id);
+                            force_render = true;
                         }
                     }
                 }
             }
             break;
-            
+
         case INPUT_TYPE_KEY2:
-            // KEY2用于返回
             if (event->pressed) {
-                if (menu->current_item && menu->current_item->parent) {
+                if (menu->editing_item) {
+                    if (menu->editing_item->input.cb) {
+                        menu->editing_item->input.cb(menu->editing_item, NULL);
+                    }
+                    menu->editing_item = NULL;
+                    force_render = true;
+                } else if (menu->group_stack_top > -1) {
+                    struct menu_group_t *exited_group = menu->group_stack[menu->group_stack_top];
+                    menu->group_stack[menu->group_stack_top] = NULL;
+                    menu->group_stack_top--;
+                    force_render = true;
+                    if (exited_group && exited_group->bind_item) {
+                        menu->current_item = exited_group->bind_item;
+                    }
+                } else if (menu->current_item && menu->current_item->parent) {
                     menu->current_item = menu->current_item->parent;
                 }
             }
             break;
             
         case INPUT_TYPE_ADC2_CH12:
-            // ADC2通道12可用于调节参数
-            // 这里可以根据需要实现特定的功能
             break;
             
         default:
             break;
     }
     
-    if (last_item != menu->current_item) {
-        menu->needs_render = true;
+    if (last_item != menu->current_item || force_render) {
+        menu_update_group_visibility(menu);
+
+        if (!force_render && last_item && last_item->group && last_item->group == menu->current_item->group) {
+            menu->item_nav_from = last_item;
+            menu->item_nav_to = menu->current_item;
+        } else {
+            menu->needs_render = true;
+        }
+        k_sem_give(&menu->render_sem);
     }
 }
 
@@ -230,7 +498,7 @@ static void menu_input_key_cb(struct input_event *evt, void *user_data)
             ev.pressed = evt->value;
             break;
     }
-
+    ev.dev = evt->dev;
     menu_input_event(menu, &ev);
 }
 
@@ -239,20 +507,31 @@ static struct menu_t local_menu = {0};
 static void menu_state_qdec_cb(const struct device *dev,
 					 const struct sensor_trigger *trigger)
 {
-	static int32_t last_qdec_value = 0;
+	const int32_t QDEC_THRESHOLD = 10;
 	struct sensor_value qdec_val;
+    int val;
 	struct menu_t *menu = CONTAINER_OF(trigger, struct menu_t, trigger);
+    menu_input_event_t ev = {
+        .type = INPUT_TYPE_QDEC,
+        .dev = dev,
+    };
 
-	if (sensor_sample_fetch(dev) == 0) {
-		if (sensor_channel_get(dev, SENSOR_CHAN_ROTATION, &qdec_val) == 0) {
-			if (qdec_val.val1 != last_qdec_value) {
-				menu_input_event_t event = {
-					.type = INPUT_TYPE_QDEC,
-					.value = qdec_val.val1 > last_qdec_value ? 1 : -1,
-				};
-				menu_process_input(menu, &event);
-				last_qdec_value = qdec_val.val1;
-			}
+ if (sensor_sample_fetch(dev) == 0) {
+  if (sensor_channel_get(dev, SENSOR_CHAN_ROTATION, &qdec_val) == 0) {
+            LOG_DBG("v1:%d v2:%d", qdec_val.val1, qdec_val.val2);
+            val = menu->qdec_value - qdec_val.val1;
+
+            if (val > 0 && val > QDEC_THRESHOLD) {
+                ev.value = 1;
+            } else if (val < 0 && val < -QDEC_THRESHOLD) {
+                ev.value = -1;
+            }
+
+            if (abs(menu->qdec_value - qdec_val.val1) > QDEC_THRESHOLD)
+            {
+                menu_process_input(menu, &ev);
+                menu->qdec_value = qdec_val.val1;
+            }
 		}
 	}
 }
@@ -265,28 +544,24 @@ static void menu_state_machine_func(void *v1, void *v2, void *v3)
         return;
     }
     
-    // 初始化当前项为根菜单项
     menu->current_item = menu->item;
     menu->state = MENU_STATE_IDLE;
-    
-    // 确保当前菜单项有效
+
     if (!menu->current_item && menu->item) {
         menu->current_item = menu->item;
     }
     
-    // 如果菜单项为空，等待菜单项被添加
     if (!menu->current_item) {
-        // 等待菜单项被添加
         while (!menu->item) {
             k_msleep(100);
         }
         menu->current_item = menu->item;
     }
-    
+
+    menu_update_group_visibility(menu);
     menu->needs_render = true;
+    k_sem_give(&menu->render_sem);
     
-    // 初始化输入设备
-    menu->qdec_dev = DEVICE_DT_GET(DT_ALIAS(qdec0));
     menu->adc2_dev = device_get_binding("adc_2");
 
     menu->qdec_value = 0;
@@ -294,39 +569,89 @@ static void menu_state_machine_func(void *v1, void *v2, void *v3)
     menu->key2_pressed = false;
     menu->adc2_value = 0;
 
-    menu->trigger.chan = SENSOR_CHAN_ROTATION;
-    menu->trigger.type = SENSOR_TRIG_DATA_READY;
-
-    sensor_trigger_set(menu->qdec_dev, &menu->trigger, menu_state_qdec_cb);
+    struct k_poll_event events[2];
+    k_poll_event_init(&events[0], K_POLL_TYPE_SEM_AVAILABLE, K_POLL_MODE_NOTIFY_ONLY, &menu->render_sem);
+    k_poll_event_init(&events[1], K_POLL_TYPE_MSGQ_DATA_AVAILABLE, K_POLL_MODE_NOTIFY_ONLY, &menu->update_msgq);
 
     while (1) {
-        // 渲染菜单
-        if (menu->needs_render) {
-            menu_render(menu);
-            menu->needs_render = false;
+        int rc = k_poll(events, 2, K_MSEC(100));
+
+        if (rc == 0) {
+            if (events[0].state == K_POLL_STATE_SEM_AVAILABLE) {
+                k_sem_take(&menu->render_sem, K_NO_WAIT);
+                if (menu->item_nav_from) {
+                    menu_refresh_item_selection(menu, menu->item_nav_from, menu->item_nav_to);
+                    menu->item_nav_from = NULL;
+                    menu->item_nav_to = NULL;
+                } else if (menu->group_to_refresh) {
+                    menu_refresh_group_items(menu, menu->group_to_refresh);
+                    menu->group_to_refresh = NULL;
+                } else if (menu->needs_render) {
+                    menu_render(menu);
+                    menu->needs_render = false;
+                }
+            }
+
+            if (events[1].state == K_POLL_STATE_MSGQ_DATA_AVAILABLE) {
+                struct menu_update_msg msg;
+                if (k_msgq_get(&menu->update_msgq, &msg, K_NO_WAIT) == 0) {
+                    if (msg.item && msg.item != menu->editing_item) {
+                        msg.item->input.value = msg.value;
+                        menu_item_refresh(msg.item);
+                    }
+                }
+            }
+        } else if (rc == -EAGAIN) {
+            if (menu->editing_item) {
+                char editing_value_buf[16];
+                snprintf(editing_value_buf, sizeof(editing_value_buf), "%d", menu->editing_item->input.editing_value);
+                if (strcmp(editing_value_buf, menu->editing_item->input.rendered_value_str) != 0) {
+                    if (strlen(editing_value_buf) != strlen(menu->editing_item->input.rendered_value_str)) {
+                        menu_item_refresh(menu->editing_item);
+                    } else {
+                        menu_render_item_value_only(menu->editing_item);
+                    }
+                }
+            } else {
+                struct menu_item_t *item = menu->item;
+                while(item) {
+                    if (item->type == MENU_ITEM_TYPE_INPUT && item->visible) {
+                        char current_value_buf[16];
+                        snprintf(current_value_buf, sizeof(current_value_buf), "%d", item->input.value);
+                        if (strcmp(current_value_buf, item->input.rendered_value_str) != 0) {
+                            if (strlen(current_value_buf) != strlen(item->input.rendered_value_str)) {
+                                menu_item_refresh(item);
+                            } else {
+                                menu_render_item_value_only(item);
+                            }
+                        }
+                    }
+                    item = item->next;
+                }
+            }
         }
-        
-        // 等待一段时间
-        k_msleep(50); // 缩短等待时间以提高响应速度
+        events[0].state = K_POLL_STATE_NOT_READY;
+        events[1].state = K_POLL_STATE_NOT_READY;
     }
 }
 
-// 设置当前菜单项
 void menu_set_current_item(struct menu_t *menu, struct menu_item_t *item)
 {
     if (menu && menu->current_item != item) {
         menu->current_item = item;
         menu->needs_render = true;
+        k_sem_give(&menu->render_sem);
     }
 }
 
-// 获取当前菜单项
 struct menu_item_t *menu_get_current_item(struct menu_t *menu)
 {
     return menu ? menu->current_item : NULL;
 }
 
 INPUT_CALLBACK_DEFINE_NAMED(DEVICE_DT_GET(DT_NODELABEL(buttons)), menu_input_key_cb, &local_menu, key);
+
+static char g_update_msgq_buffer[MENU_UPDATE_MSGQ_MAX_MSGS * sizeof(struct menu_update_msg)];
 
 struct menu_t *menu_create(const struct device *render_dev)
 {
@@ -339,6 +664,14 @@ struct menu_t *menu_create(const struct device *render_dev)
         return NULL;
     }
 
+    k_sem_init(&menu->render_sem, 0, 1);
+    k_mutex_init(&menu->pannel_mutex);
+    k_msgq_init(&menu->update_msgq, g_update_msgq_buffer, sizeof(struct menu_update_msg), MENU_UPDATE_MSGQ_MAX_MSGS);
+    menu->group_stack_top = -1;
+    menu->group_to_refresh = NULL;
+    menu->item_nav_from = NULL;
+    menu->item_nav_to = NULL;
+
     menu->tid = k_thread_create(&menu->thread,
             menu->stack,
             MENU_STACK_SIZE,
@@ -348,113 +681,128 @@ struct menu_t *menu_create(const struct device *render_dev)
     return menu;
 }
 
+void menu_item_queue_update(struct menu_item_t *item, int32_t value)
+{
+    if (!item || !item->menu) {
+        return;
+    }
+
+    struct menu_update_msg msg = {
+        .item = item,
+        .value = value,
+    };
+
+    if (k_msgq_put(&item->menu->update_msgq, &msg, K_NO_WAIT) != 0) {
+        LOG_WRN("Menu update queue full!");
+    }
+}
+
+int menu_sensor_bind(struct menu_t *menu, const struct device *dev)
+{
+    if (!device_is_ready(dev))
+    {
+        return -ENODEV;
+    }
+
+    menu->qdec_dev = dev;
+
+    menu->trigger.chan = SENSOR_CHAN_ROTATION;
+    menu->trigger.type = SENSOR_TRIG_DATA_READY;
+
+    sensor_trigger_set(menu->qdec_dev, &menu->trigger, menu_state_qdec_cb);
+
+    return 0;
+}
+
 int menu_item_add(struct menu_t *menu, struct menu_item_t *item, uint8_t parent)
 {
-    // 参数检查
     if (!menu || !item) {
-        return -EINVAL; // 无效参数
+        return -EINVAL;
     }
 
-    // 检查菜单项名称是否为空
     if (item->name[0] == '\0') {
-        return -EINVAL; // 菜单项名称不能为空
+        return -EINVAL;
     }
 
-    // 检查菜单项ID是否已存在（只有在菜单不为空时才检查）
     if (menu->item && find_menu_item_by_id(menu->item, item->id)) {
-        return -EEXIST; // 菜单项ID已存在
+        return -EEXIST;
     }
 
-    // 初始化新菜单项的指针
     item->parent = NULL;
     item->next = NULL;
     item->prev = NULL;
     item->items = NULL;
+    item->group_next = NULL;
+    item->group_prev = NULL;
+    item->visible = true;
 
-    // 如果是第一个菜单项，直接设置为菜单的根项
     if (!menu->item) {
         menu->item = item;
         return 0;
     }
 
-    // 查找父菜单项
     struct menu_item_t *parent_item = NULL;
     if (parent == 0) {
-        // 如果parent为0，添加到根级别
         parent_item = NULL;
     } else {
-        // 查找指定ID的父菜单项
         struct menu_item_t *current = menu->item;
         parent_item = find_menu_item_by_id(current, parent);
         if (!parent_item) {
-            return -ENOENT; // 父菜单项不存在
+            return -ENOENT;
         }
     }
 
-    // 设置新菜单项的父节点
     item->parent = parent_item;
 
     if (parent_item) {
-        // 添加到父菜单项的子菜单列表
         if (!parent_item->items) {
-            // 如果父菜单项还没有子菜单，直接添加
             parent_item->items = item;
         } else {
-            // 否则，添加到子菜单列表的末尾
             struct menu_item_t *child = parent_item->items;
             while (child->next) {
                 child = child->next;
             }
             child->next = item;
-            item->prev = child; // 设置前驱指针
+            item->prev = child; 
         }
     } else {
-        // 添加到根级别
         struct menu_item_t *current = menu->item;
         while (current->next) {
             current = current->next;
         }
         current->next = item;
-        item->prev = current; // 设置前驱指针
+        item->prev = current;
     }
 
     return 0;
 }
 
-// 辅助函数：根据ID查找菜单项（纯迭代实现，节省内存）
 static struct menu_item_t *find_menu_item_by_id(struct menu_item_t *root, uint8_t id)
 {
     if (!root) {
         return NULL;
     }
 
-    // 使用纯迭代方式遍历菜单树
-    // 从根节点开始
     struct menu_item_t *current = root;
-    
-    // 使用prev指针回溯，实现深度优先遍历
+
     while (current) {
-        // 检查当前节点
         if (current->id == id) {
             return current;
         }
         
-        // 如果有子节点，先处理子节点
         if (current->items) {
             current = current->items;
         }
-        // 如果没有子节点但有同级节点，处理同级节点
+
         else if (current->next) {
             current = current->next;
         }
-        // 如果既没有子节点也没有同级节点，回溯到父节点
         else {
-            // 回溯到父节点，然后检查父节点的同级节点
+
             while (current && !current->next) {
                 current = current->parent;
             }
-            
-            // 如果找到了有同级节点的父节点，移动到同级节点
+
             if (current) {
                 current = current->next;
             }
@@ -472,4 +820,355 @@ void menu_render_start(struct menu_t *menu)
     }
 
     k_thread_start(menu->tid);
+}
+
+struct menu_group_t *menu_group_create(struct menu_t *menu, const char *title, uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t color, uint32_t align, uint32_t item_text_align)
+{
+    struct menu_group_t *group = k_malloc(sizeof(struct menu_group_t));
+    if (!group) {
+        return NULL;
+    }
+
+    strncpy(group->title, title, sizeof(group->title) - 1);
+    group->title[sizeof(group->title) - 1] = '\0';
+    group->x = x;
+    group->y = y;
+    group->width = width;
+    group->height = height;
+    group->color = color;
+    group->items = NULL;
+    group->next = NULL;
+    group->visible = true;
+    group->bind_item = NULL;
+    group->always_visible = false;
+    group->align = align;
+    group->item_text_align = item_text_align;
+    group->menu = menu;
+
+    if (!menu->groups) {
+        menu->groups = group;
+    } else {
+        struct menu_group_t *current = menu->groups;
+        while (current->next) {
+            current = current->next;
+        }
+        current->next = group;
+    }
+
+    return group;
+}
+
+int menu_group_add_item(struct menu_group_t *group, struct menu_item_t *item)
+{
+    if (!group || !item) {
+        return -EINVAL;
+    }
+
+    item->group = group;
+    item->menu = group->menu;
+
+    if (group->menu && !(item->style & MENU_STYLE_LABEL)) {
+        menu_item_add(group->menu, item, 0);
+    }
+
+    if (!group->items) {
+        group->items = item;
+        item->group_prev = NULL;
+    } else {
+        struct menu_item_t *current = group->items;
+        while (current->group_next) {
+            current = current->group_next;
+        }
+        current->group_next = item;
+        item->group_prev = current;
+    }
+    item->group_next = NULL;
+
+    return 0;
+}
+
+void menu_item_set_visible(struct menu_item_t *item, bool visible)
+{
+    if (item) {
+        item->visible = visible;
+    }
+}
+
+void menu_group_set_visible(struct menu_group_t *group, bool visible)
+{
+    if (group) {
+        group->visible = visible;
+    }
+}
+
+void menu_group_bind_item(struct menu_group_t *group, struct menu_item_t *item)
+{
+    if (group) {
+        group->bind_item = item;
+    }
+}
+
+void menu_group_set_always_visible(struct menu_group_t *group, bool always_visible)
+{
+    if (group) {
+        group->always_visible = always_visible;
+    }
+}
+
+static void menu_update_group_visibility(struct menu_t *menu)
+{
+    if (!menu) {
+        return;
+    }
+
+    struct menu_group_t *group = menu->groups;
+    struct menu_group_t *active_group = NULL;
+
+    if (menu->group_stack_top > -1) {
+        active_group = menu->group_stack[menu->group_stack_top];
+    }
+
+    while (group) {
+        if (group->always_visible) {
+            group->visible = true;
+        } else if (active_group) {
+            group->visible = (group == active_group);
+        } else {
+            group->visible = (group->bind_item == NULL);
+        }
+        group = group->next;
+    }
+}
+
+static struct menu_group_t *find_group_by_bind_item(struct menu_t *menu, struct menu_item_t *item)
+{
+    if (!menu || !item) {
+        return NULL;
+    }
+
+    struct menu_group_t *group = menu->groups;
+    while (group) {
+        if (group->bind_item == item) {
+            return group;
+        }
+        group = group->next;
+    }
+
+    return NULL;
+}
+
+void menu_group_set_align(struct menu_group_t *group, uint32_t align)
+{
+    if (group) {
+        group->align = align;
+    }
+}
+
+void menu_group_set_item_text_align(struct menu_group_t *group, uint32_t align)
+{
+    if (group) {
+        group->item_text_align = align;
+    }
+}
+
+void menu_set_main_group(struct menu_t *menu, struct menu_group_t *group)
+{
+    if (menu) {
+        menu->main_group = group;
+    }
+}
+
+static void menu_refresh_item_selection(struct menu_t *menu, struct menu_item_t *last_item, struct menu_item_t *current_item)
+{
+    if (!menu || !last_item || !current_item || !last_item->group || last_item->group != current_item->group) {
+        return;
+    }
+
+    struct menu_group_t *group = current_item->group;
+
+    k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+
+    uint16_t item_x, last_y, current_y, item_w;
+    menu_get_item_layout(group, last_item, &item_x, &last_y, &item_w);
+    menu_get_item_layout(group, current_item, &item_x, &current_y, &item_w);
+
+    menu_render_item(menu, last_item, item_x, last_y, false, item_w);
+    menu_render_item(menu, current_item, item_x, current_y, true, item_w);
+
+    k_mutex_unlock(&menu->pannel_mutex);
+}
+
+static void menu_refresh_single_item_fast(struct menu_item_t *item)
+{
+    if (!item || !item->menu || !item->group || !item->group->visible) {
+        return;
+    }
+
+    k_mutex_lock(&item->menu->pannel_mutex, K_FOREVER);
+
+    uint16_t item_x, item_y, item_w;
+    menu_get_item_layout(item->group, item, &item_x, &item_y, &item_w);
+    bool selected = (item == item->menu->current_item);
+    menu_render_item(item->menu, item, item_x, item_y, selected, item_w);
+
+    k_mutex_unlock(&item->menu->pannel_mutex);
+}
+
+static void menu_render_item_value_only(struct menu_item_t *item)
+{
+    if (!item || !item->menu || !item->group || !item->visible || item->type != MENU_ITEM_TYPE_INPUT) {
+        return;
+    }
+
+    struct menu_t *menu = item->menu;
+    k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+
+    bool selected = (item == menu->current_item);
+    uint16_t text_color = selected ? COLOR_BLACK : COLOR_WHITE;
+    uint16_t bg_color = selected ? COLOR_WHITE : COLOR_BLACK;
+
+    uint16_t item_x, item_y, item_w;
+    menu_get_item_layout(item->group, item, &item_x, &item_y, &item_w);
+
+    size_t name_len = strlen((const char *)item->name);
+    uint16_t value_x = item_x + name_len * CONFIG_FONT_WIDTH + 5;
+    uint16_t text_y = item_y + 2;
+
+    char new_value_buf[16];
+    int32_t value_to_display = (menu->editing_item == item) ? item->input.editing_value : item->input.value;
+    snprintf(new_value_buf, sizeof(new_value_buf), "%d", value_to_display);
+
+    uint16_t clear_x = value_x;
+    uint16_t clear_y = item_y;
+    uint16_t clear_w = (item_x + item_w + 2) - clear_x;
+    uint16_t clear_h = CONFIG_FONT_HEIGHT + 4;
+
+    pannel_render_rect(menu->pannel, clear_x, clear_y, clear_w, clear_h, bg_color, true);
+    pannel_render_txt(menu->pannel, (uint8_t *)new_value_buf, value_x, text_y, text_color);
+    strncpy(item->input.rendered_value_str, new_value_buf, sizeof(item->input.rendered_value_str) - 1);
+    item->input.rendered_value_str[sizeof(item->input.rendered_value_str) - 1] = '\0';
+
+    k_mutex_unlock(&menu->pannel_mutex);
+}
+
+static void menu_get_item_layout(struct menu_group_t *group, struct menu_item_t *item_to_find, uint16_t *out_x, uint16_t *out_y, uint16_t *out_w)
+{
+    if (!group || !item_to_find || !out_x || !out_y || !out_w) {
+        return;
+    }
+
+    uint16_t max_item_width = 0;
+    uint16_t total_height = 0;
+    struct menu_item_t *item = group->items;
+    while (item) {
+        if (item->visible) {
+            size_t name_len = strlen((const char *)item->name);
+            uint16_t current_item_width = CONFIG_FONT_WIDTH * name_len;
+            if (item->type == MENU_ITEM_TYPE_INPUT) {
+                char value_buf[16] = {0};
+                int32_t value_to_display = (group->menu && group->menu->editing_item == item) ? item->input.editing_value : item->input.value;
+                snprintf(value_buf, sizeof(value_buf), "%d", value_to_display);
+                current_item_width += 5 + strlen(value_buf) * CONFIG_FONT_WIDTH;
+            } else if (item->style & MENU_STYLE_LABEL && item->label_cb) {
+                char label_buf[32] = {0};
+                item->label_cb(item, label_buf, sizeof(label_buf));
+                current_item_width += 1 + strlen(label_buf) * CONFIG_FONT_WIDTH;
+            }
+            if (current_item_width > max_item_width) max_item_width = current_item_width;
+            total_height += CONFIG_FONT_HEIGHT + 5;
+        }
+        item = item->group_next;
+    }
+
+    uint16_t start_x = group->x + 5;
+    uint16_t start_y = group->y + 5;
+    if (group->align & MENU_ALIGN_V_CENTER) start_y = group->y + (group->height - total_height) / 2;
+    if (group->item_text_align & MENU_STYLE_CENTER) start_x = group->x + (group->width - max_item_width) / 2;
+    else if (group->item_text_align & MENU_STYLE_RIGHT) start_x = group->x + group->width - max_item_width - 5;
+
+    item = group->items;
+    uint16_t current_y = start_y;
+    while (item) {
+        if (item->visible) {
+            if (item == item_to_find) {
+                *out_x = start_x;
+                *out_y = current_y;
+                *out_w = max_item_width;
+                return;
+            }
+            current_y += CONFIG_FONT_HEIGHT + 5;
+        }
+        item = item->group_next;
+    }
+}
+
+void menu_item_refresh(struct menu_item_t *item)
+{
+	if (!item || !item->menu || !item->group || !item->group->visible) {
+		return;
+	}
+
+	struct menu_t *menu = item->menu;
+	struct menu_group_t *group = item->group;
+
+	k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+
+	pannel_render_rect(menu->pannel, group->x + 1, group->y + 4, group->width - 2, group->height - 5, COLOR_BLACK, true);
+
+	uint16_t max_item_width = 0;
+	uint16_t total_height = 0;
+	struct menu_item_t *current_item_in_loop = group->items;
+	while (current_item_in_loop) {
+		if (current_item_in_loop->visible) {
+			size_t name_len = strlen((const char *)current_item_in_loop->name);
+			uint16_t current_item_width = CONFIG_FONT_WIDTH * name_len;
+			if (current_item_in_loop->type == MENU_ITEM_TYPE_INPUT) {
+				char value_buf[16] = {0};
+				int32_t value_to_display = (menu->editing_item == current_item_in_loop) ? current_item_in_loop->input.editing_value : current_item_in_loop->input.value;
+				snprintf(value_buf, sizeof(value_buf), "%d", value_to_display);
+				current_item_width += 5 + strlen(value_buf) * CONFIG_FONT_WIDTH;
+			} else if (current_item_in_loop->style & MENU_STYLE_LABEL && current_item_in_loop->label_cb) {
+				char label_buf[32] = {0};
+				current_item_in_loop->label_cb(current_item_in_loop, label_buf, sizeof(label_buf));
+				current_item_width += 1 + strlen(label_buf) * CONFIG_FONT_WIDTH;
+			}
+			if (current_item_width > max_item_width) {
+				max_item_width = current_item_width;
+			}
+			total_height += CONFIG_FONT_HEIGHT + 5;
+		}
+		current_item_in_loop = current_item_in_loop->group_next;
+	}
+
+	uint16_t start_x = group->x + 5;
+	uint16_t start_y = group->y + 5;
+	if (group->align & MENU_ALIGN_V_CENTER) {
+		start_y = group->y + (group->height - total_height) / 2;
+	}
+	if (group->item_text_align & MENU_STYLE_CENTER) {
+		start_x = group->x + (group->width - max_item_width) / 2;
+	} else if (group->item_text_align & MENU_STYLE_RIGHT) {
+		start_x = group->x + group->width - max_item_width - 5;
+	}
+
+	current_item_in_loop = group->items;
+	uint16_t current_y = start_y;
+	while (current_item_in_loop) {
+		if (current_item_in_loop->visible) {
+			bool selected = (current_item_in_loop == menu->current_item);
+			menu_render_item(menu, current_item_in_loop, start_x, current_y, selected, max_item_width);
+			current_y += CONFIG_FONT_HEIGHT + 5;
+		}
+		current_item_in_loop = current_item_in_loop->group_next;
+	}
+
+	k_mutex_unlock(&menu->pannel_mutex);
+}
+
+bool menu_item_is_editing(struct menu_item_t *item)
+{
+    if (!item || !item->menu) {
+        return false;
+    }
+    return item->menu->editing_item == item;
 }
