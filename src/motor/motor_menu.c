@@ -47,10 +47,32 @@ struct menu_item_t motor_enable_item = {
     .visible = true,
 };
 
+static const char *motor_mode_options[] = {"Speed", "Torque"};
+
+static void motor_mode_list_cb(struct menu_item_t *item, uint8_t selected_index)
+{
+    LOG_INF("Motor mode changed to %s", motor_mode_options[selected_index]);
+}
+
+struct menu_item_t motor_mode_item = {
+    .name = "Mode",
+    .id = 7,
+    .style = MENU_STYLE_NORMAL,
+    .type = MENU_ITEM_TYPE_LIST,
+    .list = {
+        .options = motor_mode_options,
+        .num_options = ARRAY_SIZE(motor_mode_options),
+        .selected_index = 0,
+        .cb = motor_mode_list_cb,
+        .layout = MENU_LAYOUT_VERTICAL,
+        .title = "Select Mode",
+    },
+    .visible = true,
+};
+
 static void speed_item_value_change_work(struct k_work *work)
 {
     struct item_input_t *input = CONTAINER_OF(work, struct item_input_t, work);
-    struct menu_item_t *item = CONTAINER_OF(input, struct menu_item_t, input);
     uint32_t batch_avg = 0;
     size_t count = input->values_count / sizeof(uint16_t);
 
@@ -99,6 +121,7 @@ void motor_setup_menu_bind(struct motor_ctrl *ctrl, struct menu_t *menu)
 
     menu_group_add_item(motor_group, &motor_speed_item);
     menu_group_add_item(motor_group, &motor_enable_item);
+    menu_group_add_item(motor_group, &motor_mode_item);
     menu_group_bind_item(motor_group, &setup_motor_item);
 
     speed_value_change_callback.param = &motor_speed_item;

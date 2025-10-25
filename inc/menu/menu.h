@@ -87,6 +87,7 @@ typedef enum {
     MENU_ITEM_TYPE_NORMAL,
     MENU_ITEM_TYPE_INPUT,
     MENU_ITEM_TYPE_SWITCH,
+    MENU_ITEM_TYPE_LIST,
 } menu_item_type_t;
 
 #define ADC_FILTER_WINDOW_SIZE 10
@@ -135,6 +136,16 @@ struct menu_item_t {
             const char *text_on;
             const char *text_off;
         } switch_ctrl;
+        struct item_list_t {
+            const char **options;
+            uint8_t num_options;
+            uint8_t selected_index;
+            uint8_t editing_index;
+            void (*cb)(struct menu_item_t *item, uint8_t selected_index);
+            uint32_t layout;
+            const char *title;
+            char rendered_value_str[16];
+        } list;
     };
 };
 

@@ -1,4 +1,3 @@
-#include "zephyr/dt-bindings/input/input-event-codes.h"
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
@@ -59,6 +58,7 @@ static void menu_update_group_visibility(struct menu_t *menu);
 static void _menu_update_group_visibility_nolock(struct menu_t *menu);
 static struct menu_group_t *find_group_by_bind_item(struct menu_t *menu, struct menu_item_t *item);
 static void render_truncated_text(struct pannel_t *pannel, const char *text, uint16_t x, uint16_t y, uint16_t color, uint16_t max_width);
+static void menu_render_list_item_at_index(struct menu_t *menu, struct menu_item_t *item, uint8_t index, bool selected);
 
 
 static void menu_render_group_chrome(struct menu_t *menu, struct menu_group_t *group)
@@ -204,9 +204,79 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
         strncat(full_text, switch_str, sizeof(full_text) - strlen(full_text) - 1);
         strncpy(item->switch_ctrl.rendered_value_str, switch_str, sizeof(item->switch_ctrl.rendered_value_str) - 1);
         item->switch_ctrl.rendered_value_str[sizeof(item->switch_ctrl.rendered_value_str) - 1] = '\0';
+    } else if (item->type == MENU_ITEM_TYPE_LIST) {
+        if (menu->editing_item == item) {
+            // In editing mode, we might just show the name, as the list is rendered separately
+        } else {
+            if (item->list.num_options > 0 && item->list.selected_index < item->list.num_options) {
+                const char *selected_option = item->list.options[item->list.selected_index];
+                if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
+                    strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+                }
+                strncat(full_text, selected_option, sizeof(full_text) - strlen(full_text) - 1);
+                strncpy(item->list.rendered_value_str, selected_option, sizeof(item->list.rendered_value_str) - 1);
+                item->list.rendered_value_str[sizeof(item->list.rendered_value_str) - 1] = '\0';
+            }
+        }
     }
 
     render_truncated_text(menu->pannel, full_text, text_x, text_y, text_color, available_width);
+}
+
+static void menu_render_list_item_at_index(struct menu_t *menu, struct menu_item_t *item, uint8_t index, bool selected)
+{
+    if (!menu || !item || index >= item->list.num_options) {
+        return;
+    }
+
+    struct display_capabilities *caps;
+    pannel_get_capabilities(menu->pannel, &caps);
+
+    uint16_t start_y = 15;
+    uint16_t step_y = CONFIG_FONT_HEIGHT + 5;
+    uint16_t step_x = 8 * CONFIG_FONT_WIDTH;
+
+    uint16_t text_color = selected ? COLOR_BLACK : COLOR_WHITE;
+    uint16_t bg_color = selected ? COLOR_WHITE : COLOR_BLACK;
+    uint16_t current_x;
+    uint16_t current_y = start_y;
+
+    uint16_t text_width = strlen(item->list.options[index]) * CONFIG_FONT_WIDTH;
+
+    if (item->list.layout & MENU_LAYOUT_VERTICAL) {
+        current_y += index * step_y;
+        current_x = (caps->x_resolution / 2) - (text_width / 2);
+    } else {
+        current_x = 10;
+        current_x += index * step_x;
+    }
+
+    pannel_render_rect(menu->pannel, current_x - 2, current_y, strlen(item->list.options[index]) * CONFIG_FONT_WIDTH + 4, CONFIG_FONT_HEIGHT + 4, bg_color, true);
+    pannel_render_txt(menu->pannel, (uint8_t *)item->list.options[index], current_x, current_y + 2, text_color);
+}
+
+static void menu_render_list_editing(struct menu_t *menu, struct menu_item_t *item)
+{
+    if (!menu || !item || item->type != MENU_ITEM_TYPE_LIST) {
+        return;
+    }
+
+    struct display_capabilities *caps;
+    pannel_get_capabilities(menu->pannel, &caps);
+
+    pannel_render_rect(menu->pannel, 5, 5, caps->x_resolution - 10, caps->y_resolution - 10, COLOR_WHITE, false);
+    if (item->list.title) {
+        uint16_t title_len = strlen(item->list.title);
+        uint16_t title_width = title_len * CONFIG_FONT_WIDTH;
+        uint16_t title_x = (caps->x_resolution / 2) - (title_width / 2);
+        pannel_render_rect(menu->pannel, title_x - 2, 5, title_width + 4, 1, COLOR_BLACK, true);
+        pannel_render_txt(menu->pannel, (uint8_t *)item->list.title, title_x, 5 - (CONFIG_FONT_HEIGHT / 2), COLOR_WHITE);
+    }
+
+    for (uint8_t i = 0; i < item->list.num_options; i++) {
+        bool selected = (i == item->list.editing_index);
+        menu_render_list_item_at_index(menu, item, i, selected);
+    }
 }
 
 static void menu_render_group(struct menu_t *menu, struct menu_group_t *group)
@@ -259,6 +329,11 @@ static void menu_render(struct menu_t *menu)
     pannel_get_capabilities(menu->pannel, &caps);
     
     pannel_render_clear(menu->pannel, COLOR_BLACK);
+
+    if (menu->editing_item && menu->editing_item->type == MENU_ITEM_TYPE_LIST) {
+        menu_render_list_editing(menu, menu->editing_item);
+        return;
+    }
 
     struct menu_group_t *group = menu->groups;
     while (group) {
@@ -380,6 +455,24 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                 force_render = true;
             } else if (menu->editing_item && menu->editing_item->type == MENU_ITEM_TYPE_SWITCH) {
                 menu->editing_item->switch_ctrl.editing_is_on = !menu->editing_item->switch_ctrl.editing_is_on;
+            } else if (menu->editing_item && menu->editing_item->type == MENU_ITEM_TYPE_LIST) {
+                uint8_t last_index = menu->editing_item->list.editing_index;
+                if (event->value > 0) {
+                    if (menu->editing_item->list.editing_index < menu->editing_item->list.num_options - 1) {
+                        menu->editing_item->list.editing_index++;
+                    }
+                } else if (event->value < 0) {
+                    if (menu->editing_item->list.editing_index > 0) {
+                        menu->editing_item->list.editing_index--;
+                    }
+                }
+
+                if (last_index != menu->editing_item->list.editing_index) {
+                    k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+                    menu_render_list_item_at_index(menu, menu->editing_item, last_index, false);
+                    menu_render_list_item_at_index(menu, menu->editing_item, menu->editing_item->list.editing_index, true);
+                    k_mutex_unlock(&menu->pannel_mutex);
+                }
             } else if (menu->group_stack_top > -1) {
                 if (menu->editing_item) {
                     break;
@@ -445,67 +538,87 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
         case INPUT_TYPE_KEY1:
             if (event->pressed) {
                 if (menu->editing_item) {
-                    menu->editing_item->input.value = menu->editing_item->input.editing_value;
-                    if (menu->editing_item->input.cb) {
-                        if (menu->editing_item->input.cb(menu->editing_item, &ev))
-                        {
-                            menu->editing_item->input.value = ev.value;
-                        }
+                    switch (menu->editing_item->type) {
+                        case MENU_ITEM_TYPE_INPUT:
+                            menu->editing_item->input.value = menu->editing_item->input.editing_value;
+                            if (menu->editing_item->input.cb) {
+                                if (menu->editing_item->input.cb(menu->editing_item, &ev)) {
+                                    menu->editing_item->input.value = ev.value;
+                                }
+                            }
+                            break;
+                        case MENU_ITEM_TYPE_SWITCH:
+                            menu->editing_item->switch_ctrl.is_on = menu->editing_item->switch_ctrl.editing_is_on;
+                            if (menu->editing_item->switch_ctrl.cb) {
+                                menu->editing_item->switch_ctrl.cb(menu->editing_item, menu->editing_item->switch_ctrl.is_on);
+                            }
+                            break;
+                        case MENU_ITEM_TYPE_LIST:
+                            menu->editing_item->list.selected_index = menu->editing_item->list.editing_index;
+                            if (menu->editing_item->list.cb) {
+                                menu->editing_item->list.cb(menu->editing_item, menu->editing_item->list.selected_index);
+                            }
+                            break;
+                        default:
+                            break;
                     }
                     menu->editing_item = NULL;
                     force_render = true;
-                } else if (menu->editing_item && menu->editing_item->type == MENU_ITEM_TYPE_SWITCH) {
-                    menu->editing_item->switch_ctrl.is_on = menu->editing_item->switch_ctrl.editing_is_on;
-                    if (menu->editing_item->switch_ctrl.cb) {
-                        menu->editing_item->switch_ctrl.cb(menu->editing_item, menu->editing_item->switch_ctrl.is_on);
-                    }
-                    menu->editing_item = NULL;
-                    force_render = true;
-                } else if (menu->current_item) {
-                    if (menu->current_item->type == MENU_ITEM_TYPE_INPUT) {
-                        menu->editing_item = menu->current_item;
-                        menu->editing_item->input.editing_value = menu->editing_item->input.live_value;
-                        menu->editing_item->input.user_adjusted = false;
-                        if (menu->editing_item->input.cb) {
-                            if (menu->editing_item->input.cb(menu->editing_item, &ev))
+                } else if (menu->current_item) { // We are not in edit mode, this key press is to enter edit mode or navigate
+                    switch (menu->current_item->type) {
+                        case MENU_ITEM_TYPE_INPUT:
+                            menu->editing_item = menu->current_item;
+                            menu->editing_item->input.editing_value = menu->editing_item->input.live_value;
+                            menu->editing_item->input.user_adjusted = false;
+                            if (menu->editing_item->input.cb) {
+                                if (menu->editing_item->input.cb(menu->editing_item, &ev)) {
+                                    menu->editing_item->input.editing_value = ev.value;
+                                }
+                            }
+                            force_render = true;
+                            break;
+                        case MENU_ITEM_TYPE_SWITCH:
+                            menu->editing_item = menu->current_item;
+                            menu->editing_item->switch_ctrl.editing_is_on = menu->editing_item->switch_ctrl.is_on;
+                            force_render = true;
+                            break;
+                        case MENU_ITEM_TYPE_LIST:
+                            menu->editing_item = menu->current_item;
+                            menu->editing_item->list.editing_index = menu->editing_item->list.selected_index;
+                            force_render = true;
+                            break;
+                        default: // For NORMAL items or items without a specific edit mode
                             {
-                                menu->editing_item->input.editing_value = ev.value;
-                            }
-                        }
-                        force_render = true;
-                    } else if (menu->current_item->type == MENU_ITEM_TYPE_SWITCH) {
-                        menu->editing_item = menu->current_item;
-                        menu->editing_item->switch_ctrl.editing_is_on = menu->editing_item->switch_ctrl.is_on;
-                        force_render = true;
-                    } else {
-                        struct menu_group_t *bound_group = find_group_by_bind_item(menu, menu->current_item);
-                        if (bound_group) {
-                            bool already_active = false;
-                        if (menu->group_stack_top > -1) {
-                            if (menu->group_stack[menu->group_stack_top] == bound_group) {
-                                already_active = true;
-                            }
-                        }
+                                struct menu_group_t *bound_group = find_group_by_bind_item(menu, menu->current_item);
+                                if (bound_group) {
+                                    bool already_active = false;
+                                    if (menu->group_stack_top > -1) {
+                                        if (menu->group_stack[menu->group_stack_top] == bound_group) {
+                                            already_active = true;
+                                        }
+                                    }
 
-                        if (!already_active && menu->group_stack_top < (MENU_GROUP_STACK_SIZE - 1)) {
-                            menu->group_stack_top++;
-                            menu->group_stack[menu->group_stack_top] = bound_group;
-                            force_render = true;
+                                    if (!already_active && menu->group_stack_top < (MENU_GROUP_STACK_SIZE - 1)) {
+                                        menu->group_stack_top++;
+                                        menu->group_stack[menu->group_stack_top] = bound_group;
+                                        force_render = true;
 
-                            struct menu_item_t *first_item = bound_group->items;
-                            while(first_item && ((first_item->style & MENU_STYLE_LABEL) || !first_item->visible)) {
-                                first_item = first_item->group_next;
+                                        struct menu_item_t *first_item = bound_group->items;
+                                        while(first_item && ((first_item->style & MENU_STYLE_LABEL) || !first_item->visible)) {
+                                            first_item = first_item->group_next;
+                                        }
+                                        if (first_item) {
+                                            menu->current_item = first_item;
+                                        }
+                                    }
+                                } else if (menu->current_item->items) {
+                                    menu->current_item = menu->current_item->items;
+                                } else if (menu->current_item->cb) {
+                                    menu->current_item->cb(menu->current_item, menu->current_item->id);
+                                    force_render = true;
+                                }
                             }
-                            if (first_item) {
-                                menu->current_item = first_item;
-                            }
-                        }
-                        } else if (menu->current_item->items) {
-                            menu->current_item = menu->current_item->items;
-                        } else if (menu->current_item->cb) {
-                            menu->current_item->cb(menu->current_item, menu->current_item->id);
-                            force_render = true;
-                        }
+                            break;
                     }
                 }
             }
@@ -514,12 +627,9 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
         case INPUT_TYPE_KEY2:
             if (event->pressed) {
                 if (menu->editing_item) {
-                    if (menu->editing_item->input.cb) {
-                        menu->editing_item->input.cb(menu->editing_item, NULL);
+                    if (menu->editing_item->type == MENU_ITEM_TYPE_INPUT && menu->editing_item->input.cb) {
+                        menu->editing_item->input.cb(menu->editing_item, NULL); // Notify callback of cancellation
                     }
-                    menu->editing_item = NULL;
-                    force_render = true;
-                } else if (menu->editing_item && menu->editing_item->type == MENU_ITEM_TYPE_SWITCH) {
                     menu->editing_item = NULL;
                     force_render = true;
                 } else if (menu->group_stack_top > -1) {
@@ -1179,7 +1289,6 @@ static void menu_refresh_single_item_fast(struct menu_item_t *item, bool selecte
         return;
     }
 
-    // Partial refresh is only safe for left-aligned items, as alignment might change with value length.
     if (item->group->item_text_align == 0 && (item->type == MENU_ITEM_TYPE_SWITCH || item->type == MENU_ITEM_TYPE_INPUT)) {
         struct menu_t *menu = item->menu;
         uint16_t item_x, item_y, item_w;
@@ -1198,7 +1307,6 @@ static void menu_refresh_single_item_fast(struct menu_item_t *item, bool selecte
             old_value_str = item->input.rendered_value_str;
         }
 
-        // If value length changes, a full refresh is safer to handle potential alignment shifts.
         if (strlen(new_value_buf) != strlen(old_value_str)) {
             goto full_refresh;
         }
@@ -1216,21 +1324,18 @@ static void menu_refresh_single_item_fast(struct menu_item_t *item, bool selecte
 
         k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
 
-        // Clear the old value area
         uint16_t old_value_width = strlen(old_value_str) * CONFIG_FONT_WIDTH;
         if (old_value_width > 0) {
              pannel_render_rect(menu->pannel, value_x, text_y, old_value_width, CONFIG_FONT_HEIGHT, bg_color, true);
         }
 
-        // Render the new value
         pannel_render_txt(menu->pannel, (uint8_t *)new_value_buf, value_x, text_y, text_color);
 
         k_mutex_unlock(&menu->pannel_mutex);
-        return; // Partial refresh done
+        return; 
     }
 
 full_refresh:
-    // Fallback to full refresh for non-left-aligned items or when value length changes.
     k_mutex_lock(&item->menu->pannel_mutex, K_FOREVER);
     uint16_t item_x, item_y, item_w;
     menu_get_item_layout(item->group, item, &item_x, &item_y, &item_w);
