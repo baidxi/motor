@@ -16,6 +16,8 @@ typedef enum {
     INPUT_TYPE_QDEC,      // 正交编码器
     INPUT_TYPE_KEY1,      // 按键1
     INPUT_TYPE_KEY2,      // 按键2
+    INPUT_TYPE_KEY3,
+    INPUT_TYPE_KEY4,
     INPUT_TYPE_ADC2_CH12, // ADC2通道12
 } input_type_t;
 

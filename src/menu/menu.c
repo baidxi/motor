@@ -338,6 +338,7 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                     }
                 }
             } else {
+key_process:
                 if (event->value > 0) {
                     struct menu_item_t *next_item = menu->current_item->next;
                     while (next_item) {
@@ -450,6 +451,18 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                 }
             }
             break;
+        case INPUT_TYPE_KEY3:
+            if (event->pressed) {
+                event->value = 1;
+                goto key_process;
+            }
+            break;
+        case INPUT_TYPE_KEY4:
+            if (event->pressed) {
+                event->value = -1;
+                goto key_process;
+            }
+            break;
             
         case INPUT_TYPE_ADC2_CH12:
             break;
@@ -489,13 +502,21 @@ static void menu_input_key_cb(struct input_event *evt, void *user_data)
 
     switch(evt->code)
     {
-        case INPUT_KEY_1:
+        case INPUT_KEY_ENTER:
             ev.type = INPUT_TYPE_KEY1;
             ev.pressed = evt->value;
             break;
-        case INPUT_KEY_2:
+        case INPUT_KEY_ESC:
             ev.type = INPUT_TYPE_KEY2;
             ev.pressed = evt->value;
+            break;
+        case INPUT_KEY_UP:
+            ev.type = INPUT_TYPE_KEY3;
+            ev.pressed = ev.value;
+            break;
+        case INPUT_KEY_DOWN:
+            ev.type = INPUT_TYPE_KEY4;
+            ev.pressed = ev.value;
             break;
     }
     ev.dev = evt->dev;
