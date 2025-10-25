@@ -48,6 +48,7 @@ struct menu_t {
     struct menu_group_t *group_to_refresh;
     struct menu_item_t *item_to_refresh;
     struct sensor_trigger trigger;
+    bool disable_qdec;
 };
 
 static struct menu_item_t *find_menu_item_by_id(struct menu_item_t *root, uint8_t id);
@@ -402,57 +403,6 @@ static void menu_refresh_group(struct menu_t *menu, struct menu_group_t *group)
     k_mutex_unlock(&menu->pannel_mutex);
 }
 
-static void menu_refresh_group_items(struct menu_t *menu, struct menu_group_t *group)
-{
-    if (!menu || !group || !group->visible) {
-        return;
-    }
-
-    k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
-
-    pannel_render_rect(menu->pannel, group->x + 1, group->y + 4, group->width - 2, group->height - 5, COLOR_BLACK, true);
-
-    uint16_t max_item_width = 0;
-    uint16_t total_height = 0;
-    struct menu_item_t *item = group->items;
-    while (item) {
-        if (item->visible) {
-            size_t name_len = strlen((const char *)item->name);
-            uint16_t current_item_width = CONFIG_FONT_WIDTH * name_len;
-            if (item->type == MENU_ITEM_TYPE_INPUT) {
-                char value_buf[16] = {0};
-                int32_t value_to_display = (menu->editing_item == item) ? item->input.editing_value : item->input.value;
-                snprintf(value_buf, sizeof(value_buf), "%d", value_to_display);
-                current_item_width += 5 + strlen(value_buf) * CONFIG_FONT_WIDTH;
-            } else if (item->type == MENU_ITEM_TYPE_SWITCH) {
-                current_item_width += 5 + strlen("OFF") * CONFIG_FONT_WIDTH;
-            }
-            if (current_item_width > max_item_width) max_item_width = current_item_width;
-            total_height += CONFIG_FONT_HEIGHT + 5;
-        }
-        item = item->group_next;
-    }
-
-    uint16_t start_x = group->x + 5;
-    uint16_t start_y = group->y + 5;
-    if (group->align & MENU_ALIGN_V_CENTER) start_y = group->y + (group->height - total_height) / 2;
-    if (group->item_text_align & MENU_STYLE_CENTER) start_x = group->x + (group->width - max_item_width) / 2;
-    else if (group->item_text_align & MENU_STYLE_RIGHT) start_x = group->x + group->width - max_item_width - 5;
-
-    item = group->items;
-    uint16_t current_y = start_y;
-    while (item) {
-        if (item->visible) {
-            bool selected = (item == menu->current_item);
-            menu_render_item(menu, item, start_x, current_y, selected, max_item_width);
-            current_y += CONFIG_FONT_HEIGHT + 5;
-        }
-        item = item->group_next;
-    }
-
-    k_mutex_unlock(&menu->pannel_mutex);
-}
-
 static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
 {
     bool force_render = false;
@@ -794,22 +744,25 @@ static void menu_state_qdec_cb(const struct device *dev,
         .dev = dev,
     };
 
- if (sensor_sample_fetch(dev) == 0) {
-  if (sensor_channel_get(dev, SENSOR_CHAN_ROTATION, &qdec_val) == 0) {
-            LOG_DBG("v1:%d v2:%d", qdec_val.val1, qdec_val.val2);
-            val = qdec_val.val1 - menu->qdec_value;
+    if (!menu->disable_qdec) {
+        if (sensor_sample_fetch(dev) == 0) {
+        if (sensor_channel_get(dev, SENSOR_CHAN_ROTATION, &qdec_val) == 0) {
+                LOG_DBG("v1:%d v2:%d", qdec_val.val1, qdec_val.val2);
+                val = qdec_val.val1 - menu->qdec_value;
 
-            if (val > QDEC_THRESHOLD) {
-                ev.value = 1;
-                menu_process_input(menu, &ev);
-                menu->qdec_value = qdec_val.val1;
-            } else if (val < -QDEC_THRESHOLD) {
-                ev.value = -1;
-                menu_process_input(menu, &ev);
-                menu->qdec_value = qdec_val.val1;
+                if (val > QDEC_THRESHOLD) {
+                    ev.value = 1;
+                    menu_process_input(menu, &ev);
+                    menu->qdec_value = qdec_val.val1;
+                } else if (val < -QDEC_THRESHOLD) {
+                    ev.value = -1;
+                    menu_process_input(menu, &ev);
+                    menu->qdec_value = qdec_val.val1;
+                }
             }
-		}
-	}
+        }
+    }
+
 }
 
 static void menu_state_machine_func(void *v1, void *v2, void *v3)
@@ -1027,6 +980,17 @@ int menu_sensor_bind(struct menu_t *menu, const struct device *dev)
     sensor_trigger_set(menu->qdec_dev, &menu->trigger, menu_state_qdec_cb);
 
     return 0;
+}
+
+void menu_disable_qdec(struct menu_t *menu, bool disable)
+{
+    menu->disable_qdec = disable;
+
+    if (disable) {
+        sensor_trigger_set(menu->qdec_dev, &menu->trigger, NULL);
+    } else {
+        sensor_trigger_set(menu->qdec_dev, &menu->trigger, menu_state_qdec_cb);
+    }
 }
 
 int menu_item_add(struct menu_t *menu, struct menu_item_t *item, uint8_t parent)

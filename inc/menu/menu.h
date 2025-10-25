@@ -203,3 +203,4 @@ void menu_group_set_item_text_align(struct menu_group_t *group, uint32_t align);
 void menu_set_main_group(struct menu_t *menu, struct menu_group_t *group);
 void menu_item_refresh(struct menu_item_t *item);
 bool menu_item_is_editing(struct menu_item_t *item);
+void menu_disable_qdec(struct menu_t *menu, bool disable);

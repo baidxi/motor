@@ -11,6 +11,7 @@ LOG_MODULE_DECLARE(menu, CONFIG_LOG_DEFAULT_LEVEL);
 static void startup_checkbox_cb(struct menu_item_t *item, bool is_on)
 {
     LOG_INF("Startup checkbox is now %s", is_on ? "ON" : "OFF");
+    menu_disable_qdec(item->menu, is_on);
 }
 
 static struct menu_item_t setup_item = {
