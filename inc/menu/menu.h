@@ -48,6 +48,7 @@ typedef void (*menu_item_switch_cb_t)(struct menu_item_t *item, bool is_on);
 #define MENU_STYLE_LABEL          0x00000200  // 标签样式
 #define MENU_STYLE_VALUE_LABEL    0x00000400  // 带数值的标签样式
 #define MENU_STYLE_NON_NAVIGABLE  0x00000800  // 不可导航
+#define MENU_STYLE_VALUE_ONLY     0x00001000  // 只渲染值
 
 // 颜色定义
 #define COLOR_BLACK               0x0000
@@ -130,7 +131,9 @@ struct menu_item_t {
             bool is_on;
             bool editing_is_on;
             menu_item_switch_cb_t cb;
-            char rendered_value_str[4];
+            char rendered_value_str[16];
+            const char *text_on;
+            const char *text_off;
         } switch_ctrl;
     };
 };

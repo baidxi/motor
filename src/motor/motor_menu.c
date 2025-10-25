@@ -41,6 +41,8 @@ struct menu_item_t motor_enable_item = {
     .switch_ctrl = {
         .is_on = false,
         .cb = motor_enable_switch_cb,
+        .text_on = "Enabled",
+        .text_off = "Disabled",
     },
     .visible = true,
 };

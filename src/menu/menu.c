@@ -170,14 +170,15 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
             available_width = group_right_edge - text_x;
         }
     } else {
-        // No group, effectively infinite width for rendering
         available_width = 9999;
     }
 
     char full_text[128] = {0};
     char temp_buf[64] = {0};
 
-    strncat(full_text, (const char *)item->name, sizeof(full_text) - strlen(full_text) - 1);
+    if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
+        strncat(full_text, (const char *)item->name, sizeof(full_text) - strlen(full_text) - 1);
+    }
 
     if (item->style & MENU_STYLE_LABEL && item->label_cb) {
         item->label_cb(item, temp_buf, sizeof(temp_buf));
@@ -185,13 +186,21 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
         strncat(full_text, temp_buf, sizeof(full_text) - strlen(full_text) - 1);
     } else if (item->type == MENU_ITEM_TYPE_INPUT) {
         if (!item->input.value_get_str_cb || (value_buf[0] != ':' && value_buf[0] != ' ')) {
-            strncat(full_text, "     ", sizeof(full_text) - strlen(full_text) - 1); // 5 spaces
+            strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
         }
         strncat(full_text, value_buf, sizeof(full_text) - strlen(full_text) - 1);
     } else if (item->type == MENU_ITEM_TYPE_SWITCH) {
         bool is_on = (menu->editing_item == item) ? item->switch_ctrl.editing_is_on : item->switch_ctrl.is_on;
-        const char *switch_str = is_on ? "ON" : "OFF";
-        strncat(full_text, "     ", sizeof(full_text) - strlen(full_text) - 1); // 5 spaces
+        const char *switch_str;
+        if (is_on) {
+            switch_str = item->switch_ctrl.text_on ? item->switch_ctrl.text_on : "ON";
+        } else {
+            switch_str = item->switch_ctrl.text_off ? item->switch_ctrl.text_off : "OFF";
+        }
+
+        if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
+            strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+        }
         strncat(full_text, switch_str, sizeof(full_text) - strlen(full_text) - 1);
         strncpy(item->switch_ctrl.rendered_value_str, switch_str, sizeof(item->switch_ctrl.rendered_value_str) - 1);
         item->switch_ctrl.rendered_value_str[sizeof(item->switch_ctrl.rendered_value_str) - 1] = '\0';
@@ -644,6 +653,7 @@ static void menu_state_qdec_cb(const struct device *dev,
 static void menu_state_machine_func(void *v1, void *v2, void *v3)
 {
     struct menu_t *menu = (struct menu_t *)v1;
+    const char *current_str;
 
     if (!menu) {
         return;
@@ -726,20 +736,30 @@ static void menu_state_machine_func(void *v1, void *v2, void *v3)
         } else if (rc == -EAGAIN) {
             k_mutex_lock(&menu->state_mutex, K_FOREVER);
             if (menu->editing_item) {
-                if (menu->editing_item->type == MENU_ITEM_TYPE_INPUT) {
-                    if (!menu->editing_item->input.user_adjusted) {
-                        menu->editing_item->input.editing_value = menu->editing_item->input.live_value;
-                    }
-                    char editing_value_buf[16];
-                    snprintf(editing_value_buf, sizeof(editing_value_buf), "%d", menu->editing_item->input.editing_value);
-                    if (strcmp(editing_value_buf, menu->editing_item->input.rendered_value_str) != 0) {
-                        menu_refresh_single_item_fast(menu->editing_item, true);
-                    }
-                } else if (menu->editing_item->type == MENU_ITEM_TYPE_SWITCH) {
-                    const char *current_str = menu->editing_item->switch_ctrl.editing_is_on ? "ON" : "OFF";
-                    if (strcmp(current_str, menu->editing_item->switch_ctrl.rendered_value_str) != 0) {
-                        menu_refresh_single_item_fast(menu->editing_item, true);
-                    }
+                switch(menu->editing_item->type) {
+                    case MENU_ITEM_TYPE_INPUT:
+                        if (!menu->editing_item->input.user_adjusted) {
+                            menu->editing_item->input.editing_value = menu->editing_item->input.live_value;
+                        }
+                        char editing_value_buf[16];
+                        snprintf(editing_value_buf, sizeof(editing_value_buf), "%d", menu->editing_item->input.editing_value);
+                        if (strcmp(editing_value_buf, menu->editing_item->input.rendered_value_str) != 0) {
+                            menu_refresh_single_item_fast(menu->editing_item, true);
+                        }
+                        break;
+                    case MENU_ITEM_TYPE_SWITCH:
+                        if (menu->editing_item->switch_ctrl.editing_is_on) {
+                            current_str = menu->editing_item->switch_ctrl.text_on ? menu->editing_item->switch_ctrl.text_on : "ON";
+                        } else {
+                            current_str = menu->editing_item->switch_ctrl.text_off ? menu->editing_item->switch_ctrl.text_off : "OFF";
+                        }
+
+                        if (strcmp(current_str, menu->editing_item->switch_ctrl.rendered_value_str) != 0) {
+                            menu_refresh_single_item_fast(menu->editing_item, true);
+                        }
+                        break;
+                    default:
+                        break;
                 }
             } else {
                 // This block is now only for non-editing items.
@@ -1159,26 +1179,62 @@ static void menu_refresh_single_item_fast(struct menu_item_t *item, bool selecte
         return;
     }
 
-    if (item->type == MENU_ITEM_TYPE_INPUT && (item->style & MENU_STYLE_VALUE_LABEL)) {
+    // Partial refresh is only safe for left-aligned items, as alignment might change with value length.
+    if (item->group->item_text_align == 0 && (item->type == MENU_ITEM_TYPE_SWITCH || item->type == MENU_ITEM_TYPE_INPUT)) {
+        struct menu_t *menu = item->menu;
+        uint16_t item_x, item_y, item_w;
         char new_value_buf[16];
-        char current_value_buf[16];
-        int32_t value_to_display = (item->menu->editing_item == item) ? item->input.editing_value : item->input.value;
-        
-        snprintf(new_value_buf, sizeof(new_value_buf), "%d", value_to_display);
-        snprintf(current_value_buf, sizeof(current_value_buf), "%d", item->input.value);
+        const char *old_value_str;
 
-        if (strlen(new_value_buf) == strlen(current_value_buf)) {
-            menu_render_item_value_only(item);
-            return;
+        if (item->type == MENU_ITEM_TYPE_SWITCH) {
+            bool is_on = (menu->editing_item == item) ? item->switch_ctrl.editing_is_on : item->switch_ctrl.is_on;
+            const char * text = is_on ? (item->switch_ctrl.text_on ? item->switch_ctrl.text_on : "ON")
+                                     : (item->switch_ctrl.text_off ? item->switch_ctrl.text_off : "OFF");
+            strncpy(new_value_buf, text, sizeof(new_value_buf) - 1);
+            old_value_str = item->switch_ctrl.rendered_value_str;
+        } else { // INPUT
+            int32_t value_to_display = (menu->editing_item == item) ? item->input.editing_value : item->input.value;
+            snprintf(new_value_buf, sizeof(new_value_buf), "%d", value_to_display);
+            old_value_str = item->input.rendered_value_str;
         }
+
+        // If value length changes, a full refresh is safer to handle potential alignment shifts.
+        if (strlen(new_value_buf) != strlen(old_value_str)) {
+            goto full_refresh;
+        }
+
+        menu_get_item_layout(item->group, item, &item_x, &item_y, &item_w);
+
+        uint16_t text_y = item_y + 2;
+        uint16_t value_x = item_x;
+        if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
+            value_x += (strlen((const char *)item->name) + 1) * CONFIG_FONT_WIDTH; // +1 for ':'
+        }
+
+        uint16_t bg_color = selected ? COLOR_WHITE : COLOR_BLACK;
+        uint16_t text_color = selected ? COLOR_BLACK : COLOR_WHITE;
+
+        k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+
+        // Clear the old value area
+        uint16_t old_value_width = strlen(old_value_str) * CONFIG_FONT_WIDTH;
+        if (old_value_width > 0) {
+             pannel_render_rect(menu->pannel, value_x, text_y, old_value_width, CONFIG_FONT_HEIGHT, bg_color, true);
+        }
+
+        // Render the new value
+        pannel_render_txt(menu->pannel, (uint8_t *)new_value_buf, value_x, text_y, text_color);
+
+        k_mutex_unlock(&menu->pannel_mutex);
+        return; // Partial refresh done
     }
 
+full_refresh:
+    // Fallback to full refresh for non-left-aligned items or when value length changes.
     k_mutex_lock(&item->menu->pannel_mutex, K_FOREVER);
-
     uint16_t item_x, item_y, item_w;
     menu_get_item_layout(item->group, item, &item_x, &item_y, &item_w);
     menu_render_item(item->menu, item, item_x, item_y, selected, item_w);
-
     k_mutex_unlock(&item->menu->pannel_mutex);
 }
 
