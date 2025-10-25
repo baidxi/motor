@@ -4,12 +4,14 @@
 
 struct device;
 
-// static struct menu_item_t status_item = {
-//     .name = "Status",
-//     .id = 0,
-//     .style = MENU_STYLE_HIGHLIGHT | MENU_STYLE_BORDER,
-//     .visible = true,
-// };
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_DECLARE(menu, CONFIG_LOG_DEFAULT_LEVEL);
+
+static void startup_checkbox_cb(struct menu_item_t *item, bool is_on)
+{
+    LOG_INF("Startup checkbox is now %s", is_on ? "ON" : "OFF");
+}
 
 static struct menu_item_t setup_item = {
     .name = "Setup",
@@ -19,9 +21,16 @@ static struct menu_item_t setup_item = {
 };
 
 static struct menu_item_t startup_item = {
-    .name = "Start",
+    .name = "Run",
     .id = 2,
-    .style = MENU_STYLE_HIGHLIGHT | MENU_STYLE_BORDER,
+    .style = MENU_STYLE_NORMAL | MENU_STYLE_VALUE_ONLY | MENU_SET_COLOR(COLOR_GREEN),
+    .type = MENU_ITEM_TYPE_CHECKBOX,
+    .checkbox = {
+        .is_on = false,
+        .cb = startup_checkbox_cb,
+        .text_on = "Stop",
+        .text_off = "Start",
+    },
 };
 
 static struct menu_item_t setup_display_item = {

@@ -34,6 +34,7 @@ typedef int (*menu_item_label_cb)(struct menu_item_t *item, char *buf, size_t le
 
 typedef bool (*menu_item_input_cb_t)(struct menu_item_t *item, menu_input_event_t *event);
 typedef void (*menu_item_switch_cb_t)(struct menu_item_t *item, bool is_on);
+typedef void (*menu_item_checkbox_cb_t)(struct menu_item_t *item, bool is_on);
 
 // 菜单样式定义
 #define MENU_STYLE_NORMAL        0x00000001  // 普通样式
@@ -49,6 +50,9 @@ typedef void (*menu_item_switch_cb_t)(struct menu_item_t *item, bool is_on);
 #define MENU_STYLE_VALUE_LABEL    0x00000400  // 带数值的标签样式
 #define MENU_STYLE_NON_NAVIGABLE  0x00000800  // 不可导航
 #define MENU_STYLE_VALUE_ONLY     0x00001000  // 只渲染值
+#define MENU_STYLE_CUSTOM_COLOR   0x00002000  // 使用自定义颜色
+#define MENU_STYLE_COLOR_SHIFT    16
+#define MENU_SET_COLOR(color)     (((uint32_t)(color) << MENU_STYLE_COLOR_SHIFT) | MENU_STYLE_CUSTOM_COLOR)
 
 // 颜色定义
 #define COLOR_BLACK               0x0000
@@ -88,6 +92,7 @@ typedef enum {
     MENU_ITEM_TYPE_INPUT,
     MENU_ITEM_TYPE_SWITCH,
     MENU_ITEM_TYPE_LIST,
+    MENU_ITEM_TYPE_CHECKBOX,
 } menu_item_type_t;
 
 #define ADC_FILTER_WINDOW_SIZE 10
@@ -146,6 +151,13 @@ struct menu_item_t {
             const char *title;
             char rendered_value_str[16];
         } list;
+        struct item_checkbox_t {
+            bool is_on;
+            menu_item_checkbox_cb_t cb;
+            char rendered_value_str[16];
+            const char *text_on;
+            const char *text_off;
+        } checkbox;
     };
 };
 

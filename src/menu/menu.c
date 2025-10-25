@@ -118,6 +118,8 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
     if (selected) {
         text_color = COLOR_BLACK;
         bg_color = COLOR_WHITE;
+    } else if (item->style & MENU_STYLE_CUSTOM_COLOR) {
+        text_color = (item->style >> MENU_STYLE_COLOR_SHIFT);
     } else if (item->style & MENU_STYLE_HIGHLIGHT) {
         text_color = COLOR_YELLOW;
     } else if (item->style & MENU_STYLE_DISABLED) {
@@ -186,39 +188,63 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
         item->label_cb(item, temp_buf, sizeof(temp_buf));
         strncat(full_text, " ", sizeof(full_text) - strlen(full_text) - 1);
         strncat(full_text, temp_buf, sizeof(full_text) - strlen(full_text) - 1);
-    } else if (item->type == MENU_ITEM_TYPE_INPUT) {
-        if (!item->input.value_get_str_cb || (value_buf[0] != ':' && value_buf[0] != ' ')) {
-            strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
-        }
-        strncat(full_text, value_buf, sizeof(full_text) - strlen(full_text) - 1);
-    } else if (item->type == MENU_ITEM_TYPE_SWITCH) {
-        bool is_on = (menu->editing_item == item) ? item->switch_ctrl.editing_is_on : item->switch_ctrl.is_on;
-        const char *switch_str;
-        if (is_on) {
-            switch_str = item->switch_ctrl.text_on ? item->switch_ctrl.text_on : "ON";
-        } else {
-            switch_str = item->switch_ctrl.text_off ? item->switch_ctrl.text_off : "OFF";
-        }
+    } else {
+        switch(item->type) {
+            case MENU_ITEM_TYPE_INPUT:
+                if (!item->input.value_get_str_cb || (value_buf[0] != ':' && value_buf[0] != ' ')) {
+                    strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+                }
+                strncat(full_text, value_buf, sizeof(full_text) - strlen(full_text) - 1);
+                break;
+            case MENU_ITEM_TYPE_SWITCH:
+                bool is_on = (menu->editing_item == item) ? item->switch_ctrl.editing_is_on : item->switch_ctrl.is_on;
+                const char *switch_str;
+                if (is_on) {
+                    switch_str = item->switch_ctrl.text_on ? item->switch_ctrl.text_on : "ON";
+                } else {
+                    switch_str = item->switch_ctrl.text_off ? item->switch_ctrl.text_off : "OFF";
+                }
 
-        if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
-            strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
-        }
-        strncat(full_text, switch_str, sizeof(full_text) - strlen(full_text) - 1);
-        strncpy(item->switch_ctrl.rendered_value_str, switch_str, sizeof(item->switch_ctrl.rendered_value_str) - 1);
-        item->switch_ctrl.rendered_value_str[sizeof(item->switch_ctrl.rendered_value_str) - 1] = '\0';
-    } else if (item->type == MENU_ITEM_TYPE_LIST) {
-        if (menu->editing_item == item) {
-            // In editing mode, we might just show the name, as the list is rendered separately
-        } else {
-            if (item->list.num_options > 0 && item->list.selected_index < item->list.num_options) {
-                const char *selected_option = item->list.options[item->list.selected_index];
                 if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
                     strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
                 }
-                strncat(full_text, selected_option, sizeof(full_text) - strlen(full_text) - 1);
-                strncpy(item->list.rendered_value_str, selected_option, sizeof(item->list.rendered_value_str) - 1);
-                item->list.rendered_value_str[sizeof(item->list.rendered_value_str) - 1] = '\0';
-            }
+                strncat(full_text, switch_str, sizeof(full_text) - strlen(full_text) - 1);
+                strncpy(item->switch_ctrl.rendered_value_str, switch_str, sizeof(item->switch_ctrl.rendered_value_str) - 1);
+                item->switch_ctrl.rendered_value_str[sizeof(item->switch_ctrl.rendered_value_str) - 1] = '\0';
+                break;
+            case MENU_ITEM_TYPE_LIST:
+                if (menu->editing_item == item) {
+                // In editing mode, we might just show the name, as the list is rendered separately
+                } else {
+                    if (item->list.num_options > 0 && item->list.selected_index < item->list.num_options) {
+                        const char *selected_option = item->list.options[item->list.selected_index];
+                        if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
+                            strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+                        }
+                        strncat(full_text, selected_option, sizeof(full_text) - strlen(full_text) - 1);
+                        strncpy(item->list.rendered_value_str, selected_option, sizeof(item->list.rendered_value_str) - 1);
+                        item->list.rendered_value_str[sizeof(item->list.rendered_value_str) - 1] = '\0';
+                    }
+                }
+                break;
+            case MENU_ITEM_TYPE_CHECKBOX:
+                {
+                    const char *checkbox_str = item->checkbox.is_on ?
+                                               (item->checkbox.text_on ? item->checkbox.text_on : "ON") :
+                                               (item->checkbox.text_off ? item->checkbox.text_off : "OFF");
+
+                    if (item->style & MENU_STYLE_VALUE_ONLY) {
+                        full_text[0] = '\0';
+                    } else {
+                        strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+                    }
+                    strncat(full_text, checkbox_str, sizeof(full_text) - strlen(full_text) - 1);
+                    strncpy(item->checkbox.rendered_value_str, checkbox_str, sizeof(item->checkbox.rendered_value_str) - 1);
+                    item->checkbox.rendered_value_str[sizeof(item->checkbox.rendered_value_str) - 1] = '\0';
+                }
+                break;
+            default:
+                break;
         }
     }
 
@@ -595,6 +621,13 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                             menu->editing_item = menu->current_item;
                             menu->editing_item->list.editing_index = menu->editing_item->list.selected_index;
                             force_render = true;
+                            break;
+                        case MENU_ITEM_TYPE_CHECKBOX:
+                            menu->current_item->checkbox.is_on = !menu->current_item->checkbox.is_on;
+                            if (menu->current_item->checkbox.cb) {
+                                menu->current_item->checkbox.cb(menu->current_item, menu->current_item->checkbox.is_on);
+                            }
+                            menu->item_to_refresh = menu->current_item;
                             break;
                         default: // For NORMAL items or items without a specific edit mode
                             {
