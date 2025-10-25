@@ -131,7 +131,11 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
 
     if (item->type == MENU_ITEM_TYPE_INPUT) {
         int32_t value_to_display = (menu->editing_item == item) ? item->input.editing_value : item->input.value;
-        snprintf(value_buf, sizeof(value_buf), "%d", value_to_display);
+        if (item->input.value_get_str_cb) {
+            item->input.value_get_str_cb(item, value_buf, sizeof(value_buf));
+        } else {
+            snprintf(value_buf, sizeof(value_buf), "%d", value_to_display);
+        }
         strncpy(item->input.rendered_value_str, value_buf, sizeof(item->input.rendered_value_str) - 1);
         item->input.rendered_value_str[sizeof(item->input.rendered_value_str) - 1] = '\0';
         content_width += (5 + strlen(value_buf)) * CONFIG_FONT_WIDTH;
@@ -180,7 +184,9 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
         strncat(full_text, " ", sizeof(full_text) - strlen(full_text) - 1);
         strncat(full_text, temp_buf, sizeof(full_text) - strlen(full_text) - 1);
     } else if (item->type == MENU_ITEM_TYPE_INPUT) {
-        strncat(full_text, "     ", sizeof(full_text) - strlen(full_text) - 1); // 5 spaces
+        if (!item->input.value_get_str_cb || (value_buf[0] != ':' && value_buf[0] != ' ')) {
+            strncat(full_text, "     ", sizeof(full_text) - strlen(full_text) - 1); // 5 spaces
+        }
         strncat(full_text, value_buf, sizeof(full_text) - strlen(full_text) - 1);
     } else if (item->type == MENU_ITEM_TYPE_SWITCH) {
         bool is_on = (menu->editing_item == item) ? item->switch_ctrl.editing_is_on : item->switch_ctrl.is_on;
@@ -355,6 +361,7 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                 if (menu->editing_item->input.cb && !menu->editing_item->input.cb(menu->editing_item, event)) {
                     break;
                 }
+                menu->editing_item->input.user_adjusted = true;
                 menu->editing_item->input.editing_value += event->value > 0 ? menu->editing_item->input.step : -menu->editing_item->input.step;
                 if (menu->editing_item->input.editing_value > menu->editing_item->input.max) {
                     menu->editing_item->input.editing_value = menu->editing_item->input.max;
@@ -448,7 +455,8 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                 } else if (menu->current_item) {
                     if (menu->current_item->type == MENU_ITEM_TYPE_INPUT) {
                         menu->editing_item = menu->current_item;
-                        menu->editing_item->input.editing_value = menu->editing_item->input.value;
+                        menu->editing_item->input.editing_value = menu->editing_item->input.live_value;
+                        menu->editing_item->input.user_adjusted = false;
                         if (menu->editing_item->input.cb) {
                             if (menu->editing_item->input.cb(menu->editing_item, &ev))
                             {
@@ -719,6 +727,9 @@ static void menu_state_machine_func(void *v1, void *v2, void *v3)
             k_mutex_lock(&menu->state_mutex, K_FOREVER);
             if (menu->editing_item) {
                 if (menu->editing_item->type == MENU_ITEM_TYPE_INPUT) {
+                    if (!menu->editing_item->input.user_adjusted) {
+                        menu->editing_item->input.editing_value = menu->editing_item->input.live_value;
+                    }
                     char editing_value_buf[16];
                     snprintf(editing_value_buf, sizeof(editing_value_buf), "%d", menu->editing_item->input.editing_value);
                     if (strcmp(editing_value_buf, menu->editing_item->input.rendered_value_str) != 0) {
@@ -731,23 +742,9 @@ static void menu_state_machine_func(void *v1, void *v2, void *v3)
                     }
                 }
             } else {
-                struct menu_group_t *group = menu->groups;
-                while (group) {
-                    if (group->visible) {
-                        struct menu_item_t *item = group->items;
-                        while (item) {
-                            if (item->type == MENU_ITEM_TYPE_INPUT && item->visible) {
-                                char current_value_buf[16];
-                                snprintf(current_value_buf, sizeof(current_value_buf), "%d", item->input.value);
-                                if (strcmp(current_value_buf, item->input.rendered_value_str) != 0) {
-                                    menu_refresh_single_item_fast(item, item == menu->current_item);
-                                }
-                            }
-                            item = item->group_next;
-                        }
-                    }
-                    group = group->next;
-                }
+                // This block is now only for non-editing items.
+                // The editing item refresh is handled in the block above.
+                // We no longer need to refresh non-editing INPUT items based on live value changes.
             }
             k_mutex_unlock(&menu->state_mutex);
         }

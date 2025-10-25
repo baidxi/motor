@@ -110,10 +110,12 @@ struct menu_item_t {
     union {
         struct item_input_t {
             int32_t value;
+            int32_t live_value;
             int32_t min;
             int32_t max;
             int32_t step;
             int32_t editing_value;
+            bool user_adjusted;
             const struct device *dev;
             menu_item_input_cb_t cb;
             menu_item_label_cb value_get_str_cb;

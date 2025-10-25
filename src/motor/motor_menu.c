@@ -69,11 +69,7 @@ static void speed_item_value_change_work(struct k_work *work)
 
         uint32_t new_rpm = (filtered_avg * input->max) / 4095;
 
-        if (menu_item_is_editing(item)) {
-            input->editing_value = new_rpm;
-        } else {
-            input->value = new_rpm;
-        }
+        input->live_value = new_rpm;
     }
 }
 
