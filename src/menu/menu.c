@@ -1,3 +1,4 @@
+#include "zephyr/dt-bindings/input/input-event-codes.h"
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/gpio.h>
@@ -464,9 +465,6 @@ key_process:
             }
             break;
             
-        case INPUT_TYPE_ADC2_CH12:
-            break;
-            
         default:
             break;
     }
@@ -516,6 +514,14 @@ static void menu_input_key_cb(struct input_event *evt, void *user_data)
             break;
         case INPUT_KEY_DOWN:
             ev.type = INPUT_TYPE_KEY4;
+            ev.pressed = ev.value;
+            break;
+        case INPUT_KEY_LEFT:
+            ev.type = INPUT_TYPE_KEY5;
+            ev.pressed = ev.value;
+            break;
+        case INPUT_KEY_RIGHT:
+            ev.type = INPUT_TYPE_KEY6;
             ev.pressed = ev.value;
             break;
     }

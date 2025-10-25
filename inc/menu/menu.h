@@ -18,7 +18,8 @@ typedef enum {
     INPUT_TYPE_KEY2,      // 按键2
     INPUT_TYPE_KEY3,
     INPUT_TYPE_KEY4,
-    INPUT_TYPE_ADC2_CH12, // ADC2通道12
+    INPUT_TYPE_KEY5,
+    INPUT_TYPE_KEY6,
 } input_type_t;
 
 typedef struct {
