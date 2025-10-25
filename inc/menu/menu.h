@@ -33,6 +33,7 @@ typedef void (*menu_item_callback_t)(struct menu_item_t *item, uint8_t id);
 typedef int (*menu_item_label_cb)(struct menu_item_t *item, char *buf, size_t len);
 
 typedef bool (*menu_item_input_cb_t)(struct menu_item_t *item, menu_input_event_t *event);
+typedef void (*menu_item_switch_cb_t)(struct menu_item_t *item, bool is_on);
 
 // 菜单样式定义
 #define MENU_STYLE_NORMAL        0x00000001  // 普通样式
@@ -45,6 +46,8 @@ typedef bool (*menu_item_input_cb_t)(struct menu_item_t *item, menu_input_event_
 #define MENU_STYLE_RIGHT          0x00000080  // 右对齐
 #define MENU_STYLE_LEFT           0x00000100  // 左对齐
 #define MENU_STYLE_LABEL          0x00000200  // 标签样式
+#define MENU_STYLE_VALUE_LABEL    0x00000400  // 带数值的标签样式
+#define MENU_STYLE_NON_NAVIGABLE  0x00000800  // 不可导航
 
 // 颜色定义
 #define COLOR_BLACK               0x0000
@@ -82,6 +85,7 @@ typedef enum {
 typedef enum {
     MENU_ITEM_TYPE_NORMAL,
     MENU_ITEM_TYPE_INPUT,
+    MENU_ITEM_TYPE_SWITCH,
 } menu_item_type_t;
 
 #define ADC_FILTER_WINDOW_SIZE 10
@@ -112,6 +116,7 @@ struct menu_item_t {
             int32_t editing_value;
             const struct device *dev;
             menu_item_input_cb_t cb;
+            menu_item_label_cb value_get_str_cb;
             struct k_work work;
             uint16_t *values;
             size_t values_count;
@@ -119,6 +124,12 @@ struct menu_item_t {
             uint16_t filter_window[ADC_FILTER_WINDOW_SIZE];
             uint8_t filter_index;
         } input;
+        struct item_switch_t {
+            bool is_on;
+            bool editing_is_on;
+            menu_item_switch_cb_t cb;
+            char rendered_value_str[4];
+        } switch_ctrl;
     };
 };
 

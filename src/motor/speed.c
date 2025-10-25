@@ -43,14 +43,23 @@ extern struct menu_item_t status_vbus_item;
 struct menu_item_t status_vbus_item = {
     .name = "vbus",
     .id = 6,
-    .style = MENU_STYLE_LABEL,
-    .label_cb = speed_get_vbus,
+    .type = MENU_ITEM_TYPE_INPUT,
+    .style = MENU_STYLE_VALUE_LABEL | MENU_STYLE_NON_NAVIGABLE,
+    .input = {
+        .value_get_str_cb = speed_get_vbus,
+    },
     .visible = true,
 };
 
 static void vbus_refresh_work_handler(struct k_work *work)
 {
-    menu_item_refresh(&status_vbus_item);
+    struct speed *speed = status_vbus_item.priv_data;
+    if (speed) {
+        uint32_t new_vbus_val = (uint32_t)(speed->bus_vol * 100);
+        if (status_vbus_item.input.value != new_vbus_val) {
+            status_vbus_item.input.value = new_vbus_val;
+        }
+    }
 }
 
 static void vbus_refresh_timer_cb(struct k_timer *timer)
@@ -104,7 +113,7 @@ static void bus_vol_change_cb(uint16_t *values, size_t size, uint8_t id, void *p
 
     speed->bus_vol = voltage_mv * ((R1 + R2) / R2);
 
-    LOG_DBG("bus Voltage ref raw:%d, adc volage:%d mV bus volage:%f", avg_value / (size / sizeof(uint16_t)), voltage_mv, speed->bus_vol);
+    LOG_DBG("bus Voltage ref raw:%d, adc voltage:%d mV bus voltage:%f", avg_value / (size / sizeof(uint16_t)), voltage_mv, speed->bus_vol);
 }
 
 static void bemf_detection_callback(uint16_t *values, size_t size, uint8_t id, void *param)
@@ -447,7 +456,7 @@ struct speed *speed_init(struct motor_adc *adc, void *parent)
     // adc_register_callback(adc, bemf_detection_callback, BEMF_C, data);
 
     // /* 总线电压回调 */
-    // adc_register_callback(adc, bus_vol_change_cb, VOLAGE_BUS, data);
+    // adc_register_callback(adc, bus_vol_change_cb, VOLTAGE_BUS, data);
 
     status_vbus_item.priv_data = speed;
 
@@ -647,11 +656,10 @@ void speed_get_statistics(struct speed *speed, uint32_t *raw_rpm, uint32_t *filt
 
 static int speed_get_vbus(struct menu_item_t *item, char *buf, size_t len)
 {
-    struct speed *speed = item->priv_data;
-    uint32_t integer_part = (uint32_t)speed->bus_vol;
-    uint32_t fractional_part = (uint32_t)((speed->bus_vol - integer_part) * 100);
+    uint32_t integer_part = item->input.value / 100;
+    uint32_t fractional_part = item->input.value % 100;
 
-    snprintf(buf, len, ":%d.%02d", integer_part, fractional_part);
+    snprintf(buf, len, ":%d.%02d V", integer_part, fractional_part);
 
     return 0;
 }

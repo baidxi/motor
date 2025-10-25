@@ -43,7 +43,7 @@ static const struct adc_channel_info adc_channels[] = {
     },
     {
         .cfg = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_ALIAS(adc2), channel_11)),
-        .id = VOLAGE_BUS,
+        .id = VOLTAGE_BUS,
     },
     {
         .cfg = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_ALIAS(adc2), channel_12)),

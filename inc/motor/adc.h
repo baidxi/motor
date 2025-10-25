@@ -30,7 +30,7 @@ enum channel_id {
     BEMF_A,
     BEMF_B,
     BEMF_C,
-    VOLAGE_BUS,
+    VOLTAGE_BUS,
     SPEED_CTRL,
     CURR_A,
     CURR_C,

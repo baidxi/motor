@@ -3,6 +3,9 @@
 #include <motor/motor.h>
 #include <stdint.h>
 #include <zephyr/device.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(motor_menu, CONFIG_LOG_DEFAULT_LEVEL);
 
 struct menu_item_t setup_motor_item = {
     .name = "Motor",
@@ -13,7 +16,7 @@ struct menu_item_t setup_motor_item = {
 struct menu_item_t motor_speed_item = {
     .name = "Speed",
     .id = 4,
-    .style = MENU_STYLE_NORMAL,
+    .style = MENU_STYLE_NORMAL | MENU_STYLE_VALUE_LABEL,
     .type = MENU_ITEM_TYPE_INPUT,
     .input = {
         .min = 0,
@@ -21,6 +24,23 @@ struct menu_item_t motor_speed_item = {
         .step = 100,
         .dev = DEVICE_DT_GET(DT_ALIAS(adc2)),
         .cb = NULL,
+    },
+    .visible = true,
+};
+
+static void motor_enable_switch_cb(struct menu_item_t *item, bool is_on)
+{
+    LOG_INF("Motor Enable Switch is now %s", is_on ? "ON" : "OFF");
+}
+
+struct menu_item_t motor_enable_item = {
+    .name = "Enable",
+    .id = 5,
+    .style = MENU_STYLE_NORMAL,
+    .type = MENU_ITEM_TYPE_SWITCH,
+    .switch_ctrl = {
+        .is_on = false,
+        .cb = motor_enable_switch_cb,
     },
     .visible = true,
 };
@@ -80,6 +100,7 @@ void motor_setup_menu_bind(struct motor_ctrl *ctrl, struct menu_t *menu)
 
 
     menu_group_add_item(motor_group, &motor_speed_item);
+    menu_group_add_item(motor_group, &motor_enable_item);
     menu_group_bind_item(motor_group, &setup_motor_item);
 
     speed_value_change_callback.param = &motor_speed_item;
