@@ -331,3 +331,23 @@ void pannel_render_clear(struct pannel_t *pannel, uint32_t color)
         display_write(pannel->render_dev, 0, y, &desc, row_buf);
     }
 }
+void pannel_render_buffer(struct pannel_t *pannel, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t *buf)
+{
+    if (!pannel || !buf) {
+        return;
+    }
+
+    struct display_buffer_descriptor desc;
+    size_t row_size = w * pannel->bytes_per_pixel;
+
+    desc.buf_size = row_size;
+    desc.width = w;
+    desc.height = 1;
+    desc.pitch = w;
+    desc.frame_incomplete = false;
+
+    for (uint16_t i = 0; i < h; i++) {
+        uint8_t *row_buf = buf + (i * row_size);
+        display_write(pannel->render_dev, x, y + i, &desc, row_buf);
+    }
+}

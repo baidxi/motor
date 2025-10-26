@@ -230,18 +230,34 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
                 break;
             case MENU_ITEM_TYPE_CHECKBOX:
                 {
-                    const char *checkbox_str = item->checkbox.is_on ?
-                                               (item->checkbox.text_on ? item->checkbox.text_on : "ON") :
-                                               (item->checkbox.text_off ? item->checkbox.text_off : "OFF");
-
-                    if (item->style & MENU_STYLE_VALUE_ONLY) {
-                        full_text[0] = '\0';
+                    if (item->style & MENU_STYLE_CHECKBOX_IMG) {
+                        const uint8_t *img_buf = item->checkbox.is_on ?
+                                                 (const uint8_t *)item->checkbox.text_on :
+                                                 (const uint8_t *)item->checkbox.text_off;
+                        if (img_buf) {
+                            uint16_t img_x = x;
+                            if (item->style & MENU_STYLE_CENTER) {
+                                img_x = x + (render_width - item->checkbox.img_width) / 2;
+                            } else if (item->style & MENU_STYLE_RIGHT) {
+                                img_x = x + render_width - item->checkbox.img_width;
+                            }
+                            pannel_render_buffer(menu->pannel, img_x, y, item->checkbox.img_width, item->checkbox.img_height, (uint8_t *)img_buf);
+                        }
+                        full_text[0] = '\0'; // Clear text to prevent rendering
                     } else {
-                        strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+                        const char *checkbox_str = item->checkbox.is_on ?
+                                                   (item->checkbox.text_on ? item->checkbox.text_on : "ON") :
+                                                   (item->checkbox.text_off ? item->checkbox.text_off : "OFF");
+
+                        if (item->style & MENU_STYLE_VALUE_ONLY) {
+                            full_text[0] = '\0';
+                        } else {
+                            strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+                        }
+                        strncat(full_text, checkbox_str, sizeof(full_text) - strlen(full_text) - 1);
+                        strncpy(item->checkbox.rendered_value_str, checkbox_str, sizeof(item->checkbox.rendered_value_str) - 1);
+                        item->checkbox.rendered_value_str[sizeof(item->checkbox.rendered_value_str) - 1] = '\0';
                     }
-                    strncat(full_text, checkbox_str, sizeof(full_text) - strlen(full_text) - 1);
-                    strncpy(item->checkbox.rendered_value_str, checkbox_str, sizeof(item->checkbox.rendered_value_str) - 1);
-                    item->checkbox.rendered_value_str[sizeof(item->checkbox.rendered_value_str) - 1] = '\0';
                 }
                 break;
             default:

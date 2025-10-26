@@ -14,4 +14,5 @@ void pannel_render_txt(struct pannel_t *pannel, uint8_t *txt, uint16_t x, uint16
 void pannel_render_rect(struct pannel_t *pannel, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color, bool fill);
 void pannel_render_circle(struct pannel_t *pannel, uint16_t x, uint16_t y, uint16_t redius, uint16_t color);
 void pannel_render_clear(struct pannel_t *pannel, uint32_t color);
+void pannel_render_buffer(struct pannel_t *pannel, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t *buf);
 int pannel_get_capabilities(struct pannel_t *pannel, struct display_capabilities **caps);
