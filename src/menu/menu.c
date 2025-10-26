@@ -49,6 +49,7 @@ struct menu_t {
     struct menu_item_t *item_to_refresh;
     struct sensor_trigger trigger;
     bool disable_qdec;
+    void *controller;
 };
 
 static struct menu_item_t *find_menu_item_by_id(struct menu_item_t *root, uint8_t id);
@@ -1510,4 +1511,14 @@ bool menu_item_is_editing(struct menu_item_t *item)
     bool is_editing = (item->menu->editing_item == item);
     k_mutex_unlock(&item->menu->state_mutex);
     return is_editing;
+}
+
+void menu_controller_bind(struct menu_t *menu, void *controller)
+{
+    menu->controller = controller;
+}
+
+void menu_controller_start(struct menu_t *menu, void (*start)(void *, bool), bool en)
+{
+    start(menu->controller, en);
 }

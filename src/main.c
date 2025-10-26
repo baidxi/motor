@@ -86,8 +86,6 @@ static uint32_t get_system_clock(void)
     return 0;
 }
 
-extern int menu_init(const struct device *dev, struct menu_t **out);
-
 int main(void)
 {
     const struct device *disp_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
@@ -121,13 +119,11 @@ int main(void)
         return 0;
     }
 
+    menu_controller_bind(menu, ctrl);
+
     motor_setup_menu_bind(ctrl, menu);
 
     menu_render_start(menu);
-
-    if (ctrl->ops) {
-        ctrl->ops->start(ctrl);
-    }
 
     while(1)
     {

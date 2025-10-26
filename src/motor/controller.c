@@ -17,12 +17,17 @@ struct motor_ctrl_data {
     struct motor *motor;
     uint8_t nb_channels;
     struct k_event event;
+    struct k_work work;
+    bool start;
+    struct k_work_q work_q;
 };
 
-static void motor_start(struct motor_ctrl *ctrl)
+static K_KERNEL_STACK_DEFINE(motor_ctrl_work_q_stack, 256);
+
+static void motor_ctrl_work(struct k_work *work)
 {
-    struct motor_ctrl_data *data = CONTAINER_OF(ctrl, struct motor_ctrl_data, ctrl);
-    
+    struct motor_ctrl_data *data = CONTAINER_OF(work, struct motor_ctrl_data, work);
+    int ret = 0;
     /* 检查参数有效性 */
     if (!data || !data->svpwm || !data->motor) {
         LOG_ERR("Invalid motor control data");
@@ -39,9 +44,14 @@ static void motor_start(struct motor_ctrl *ctrl)
     /* 检查电机状态是否就绪 */
     if (!speed_is_valid(data->speed)) {
         LOG_INF("Motor speed not valid, waiting for identification...");
-        k_event_wait(&data->event, MOTOR_EVENT_READY, false, K_FOREVER);
+        do {
+            ret = k_event_wait(&data->event, MOTOR_EVENT_READY, false, K_MSEC(500));
+        }while(ret == 0 && data->start);
     }
     
+
+    if (ret == 0)
+        return;
     /* 检查电机当前状态 */
     /* 由于motor_data结构体在controller.c中不可见，我们需要通过motor接口来操作 */
     
@@ -56,14 +66,37 @@ static void motor_start(struct motor_ctrl *ctrl)
     LOG_INF("Motor start command sent");
 }
 
+static void motor_start(struct motor_ctrl *ctrl)
+{
+    struct motor_ctrl_data *data = CONTAINER_OF(ctrl, struct motor_ctrl_data, ctrl);
+    data->start = true;
+
+    k_work_submit_to_queue(&data->work_q, &data->work);
+}
+
+static void motor_stop(struct motor_ctrl *ctrl)
+{
+    struct motor_ctrl_data *data = CONTAINER_OF(ctrl, struct motor_ctrl_data, ctrl);
+
+    data->start = false;
+
+    k_work_cancel(&data->work);
+}
+
 static const struct motor_ctrl_ops ops = {
     .start = motor_start,
+    .stop = motor_stop,
 };
 
 struct motor_ctrl *motor_ctrl_init(const struct pwm_info *pwm_info, const struct adc_info *adc_info, uint32_t freq)
 {
     struct motor_ctrl_data *data = k_malloc(sizeof(*data));
-
+    static const struct k_work_queue_config work_q_cfg = {
+		.name = "motor_ctrl_work_queue",
+		.no_yield = IS_ENABLED(CONFIG_SYSTEM_WORKQUEUE_NO_YIELD),
+		.essential = true,
+		.work_timeout_ms = CONFIG_SYSTEM_WORKQUEUE_WORK_TIMEOUT_MS,
+	};
     data->nb_channels = pwm_info->nb_channels;
     data->ctrl.system_clock_freq = freq;
 
@@ -95,6 +128,14 @@ struct motor_ctrl *motor_ctrl_init(const struct pwm_info *pwm_info, const struct
     data->motor = motor_init(data->speed, MOTOR_TYPE_BLDC, data->svpwm);
 
     data->ctrl.ops = &ops;
+
+    data->start = false;
+
+    k_work_queue_start(&data->work_q, motor_ctrl_work_q_stack,
+        K_KERNEL_STACK_SIZEOF(motor_ctrl_work_q_stack),
+        CONFIG_SYSTEM_WORKQUEUE_PRIORITY, &work_q_cfg);
+
+    k_work_init(&data->work, motor_ctrl_work);
     
     return &data->ctrl;
 }
@@ -110,4 +151,13 @@ int motor_ctrl_speed_register(struct motor_ctrl *ctrl, struct adc_callback_t *ca
 {
      struct motor_ctrl_data *data = CONTAINER_OF(ctrl, struct motor_ctrl_data, ctrl);
      return adc_register_callback(data->adc, callback);
+}
+
+void motor_ctrl(void *ctrl, bool enable)
+{
+    struct motor_ctrl *c = ctrl;
+    if (enable)
+        c->ops->start(c);
+    else
+        c->ops->stop(c);
 }

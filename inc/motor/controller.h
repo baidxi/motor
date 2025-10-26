@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 
 struct motor_ctrl;
 struct pwm_info;
@@ -9,6 +10,7 @@ struct adc_callback_t;
 
 struct motor_ctrl_ops {
     void (*start)(struct motor_ctrl *ctrl);
+    void (*stop)(struct motor_ctrl *ctrl);
 };
 
 struct motor_ctrl {
@@ -21,3 +23,4 @@ struct motor_ctrl *motor_ctrl_init(const struct pwm_info *pwm_info, const struct
 
 void ctrl_event_post(struct motor_ctrl *ctrl, uint32_t event);
 int motor_ctrl_speed_register(struct motor_ctrl *ctrl, struct adc_callback_t *callback);
+void motor_ctrl(void *ctrl, bool enable);
