@@ -120,6 +120,12 @@ struct adc_t *adc_init(const struct adc_info *info)
         return NULL;
     }
 
+    if (!device_is_ready(info->dev))
+    {
+        LOG_ERR("adc device not ready");
+        return NULL;
+    }
+
     alloc_size = sizeof(*adc) ;
 
     adc = k_malloc(alloc_size);

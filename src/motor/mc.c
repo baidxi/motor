@@ -1,4 +1,5 @@
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 
 #include <motor/mc.h>
 #include <motor/svpwm.h>
@@ -10,6 +11,8 @@ struct mc_t {
     int nb_motor;
     struct adc_t *adc;
 };
+
+LOG_MODULE_REGISTER(mc, LOG_LEVEL_INF);
 
 struct mc_t *mc_init(uint8_t type, int nb_motor)
 {
@@ -28,18 +31,20 @@ struct mc_t *mc_init(uint8_t type, int nb_motor)
 
 int mc_svpwm_init(struct mc_t *mc, const struct svpwm_info *info, int motor_id)
 {
+    int ret;
+
     if (motor_id > mc->nb_motor)
         return -EINVAL;
 
-    motor_svpwm_init(mc->motors[motor_id], info);
+    ret = motor_svpwm_init(mc->motors[motor_id], info);
 
-    return 0;
+    return ret;
 }
 
 int mc_adc_init(struct mc_t *mc, const struct adc_info *info)
 {
     mc->adc = adc_init(info);
-    return 0;
+    return mc->adc ? 0 : -ENODEV;
 }
 
 int mc_adc_event_register(struct mc_t *mc, struct adc_callback_t *cb)

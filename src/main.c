@@ -115,9 +115,15 @@ int main(void)
 
     mc = mc_init(MOTOR_TYPE_BLDC, 1);
 
-    mc_svpwm_init(mc, &svpwm_info, 0);
+    if (mc_svpwm_init(mc, &svpwm_info, 0))
+    {
+        return -1;
+    }
 
-    mc_adc_init(mc, &adc_info);
+    if (mc_adc_init(mc, &adc_info))
+    {
+        return -1;
+    }
     
     menu_driver_bind(menu, mc);
 
