@@ -49,7 +49,7 @@ struct menu_t {
     struct menu_item_t *item_to_refresh;
     struct sensor_trigger trigger;
     bool disable_qdec;
-    void *controller;
+    void *driver;
 };
 
 static struct menu_item_t *find_menu_item_by_id(struct menu_item_t *root, uint8_t id);
@@ -1513,12 +1513,12 @@ bool menu_item_is_editing(struct menu_item_t *item)
     return is_editing;
 }
 
-void menu_controller_bind(struct menu_t *menu, void *controller)
+void menu_driver_bind(struct menu_t *menu, void *driver)
 {
-    menu->controller = controller;
+    menu->driver = driver;
 }
 
-void menu_controller_start(struct menu_t *menu, void (*start)(void *, bool), bool en)
+void menu_driver_start(struct menu_t *menu, void (*start)(void *, bool), bool en)
 {
-    start(menu->controller, en);
+    start(menu->driver, en);
 }

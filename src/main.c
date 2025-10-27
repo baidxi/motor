@@ -4,28 +4,28 @@
 #include <zephyr/drivers/clock_control.h>
 #include <zephyr/sys/time_units.h>
 
-#include <motor/svpwm.h>
-#include <motor/controller.h>
-#include <motor/motor.h>
 #include <motor/adc.h>
-#include <motor/speed.h>
+#include <motor/mc.h>
+#include <motor/svpwm.h>
+
 #include <menu/menu.h>
+
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
-static const struct pwm_channel_info pwm_channels[] = {
+static const struct svpwm_channel_info svpwm_channels[] = {
     {
-        .channel_id = 1,
+        .id = 1,
         .en = GPIO_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), gpios, 0)
     },
     {
-        .channel_id = 2,
+        .id = 2,
         .en = GPIO_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), gpios, 1)
     },
     {
-        .channel_id = 3,
+        .id = 3,
         .en = GPIO_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), gpios, 2)
-    },
+    }
 };
 
 static const struct adc_channel_info adc_channels[] = {
@@ -47,7 +47,7 @@ static const struct adc_channel_info adc_channels[] = {
     },
     {
         .cfg = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_ALIAS(adc2), channel_12)),
-        .id = SPEED_CTRL,
+        .id = SPEED_VALUE,
     },
     {
         .cfg = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_ALIAS(adc2), channel_3)),
@@ -59,9 +59,9 @@ static const struct adc_channel_info adc_channels[] = {
     }
 };
 
-static const struct pwm_info svpwm_info = {
-    .channels = pwm_channels,
-    .nb_channels = ARRAY_SIZE(pwm_channels),
+static const struct svpwm_info svpwm_info = {
+    .channels = svpwm_channels,
+    .nb_channels = ARRAY_SIZE(svpwm_channels),
     .dev = DEVICE_DT_GET(DT_ALIAS(pwm1)),
 };
 
@@ -89,7 +89,7 @@ static uint32_t get_system_clock(void)
 int main(void)
 {
     const struct device *disp_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
-    struct motor_ctrl *ctrl;
+    struct mc_t *mc;
     struct menu_t *menu;
     uint32_t system_clock;
 
@@ -112,16 +112,18 @@ int main(void)
         LOG_ERR("Failed to get system clock, using default 170MHz");
         system_clock = 170000000; /* 默认值 */
     }
+
+    mc = mc_init(MOTOR_TYPE_BLDC, 1);
+
+    mc_svpwm_init(mc, &svpwm_info, 0);
+
+    mc_adc_init(mc, &adc_info);
     
-    ctrl = motor_ctrl_init(&svpwm_info, &adc_info, system_clock);
-    if (!ctrl) {
-        LOG_ERR("Failed to initialize motor controller\n");
-        return 0;
-    }
+    menu_driver_bind(menu, mc);
 
-    menu_controller_bind(menu, ctrl);
+    mc_setup_menu_bind(mc, menu);
 
-    motor_setup_menu_bind(ctrl, menu);
+    mc_adc_start(mc);
 
     menu_render_start(menu);
 

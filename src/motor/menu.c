@@ -1,9 +1,11 @@
-#include "motor/adc.h"
-#include <menu/menu.h>
-#include <motor/motor.h>
-#include <stdint.h>
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
+
+#include <motor/adc.h>
+#include <menu/menu.h>
+#include <motor/mc.h>
+
+#include <stdint.h>
 
 LOG_MODULE_REGISTER(motor_menu, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -28,47 +30,47 @@ struct menu_item_t motor_speed_item = {
     .visible = true,
 };
 
-static void motor_enable_switch_cb(struct menu_item_t *item, bool is_on)
-{
-    LOG_INF("Motor Enable Switch is now %s", is_on ? "ON" : "OFF");
-}
+// static void motor_enable_switch_cb(struct menu_item_t *item, bool is_on)
+// {
+//     LOG_INF("Motor Enable Switch is now %s", is_on ? "ON" : "OFF");
+// }
 
-struct menu_item_t motor_enable_item = {
-    .name = "Enable",
-    .id = 5,
-    .style = MENU_STYLE_NORMAL,
-    .type = MENU_ITEM_TYPE_SWITCH,
-    .switch_ctrl = {
-        .is_on = false,
-        .cb = motor_enable_switch_cb,
-        .text_on = "Enabled",
-        .text_off = "Disabled",
-    },
-    .visible = true,
-};
+// struct menu_item_t motor_enable_item = {
+//     .name = "Enable",
+//     .id = 5,
+//     .style = MENU_STYLE_NORMAL,
+//     .type = MENU_ITEM_TYPE_SWITCH,
+//     .switch_ctrl = {
+//         .is_on = false,
+//         .cb = motor_enable_switch_cb,
+//         .text_on = "Enabled",
+//         .text_off = "Disabled",
+//     },
+//     .visible = true,
+// };
 
-static const char *motor_mode_options[] = {"Speed", "Torque"};
+// static const char *motor_mode_options[] = {"Speed", "Torque"};
 
-static void motor_mode_list_cb(struct menu_item_t *item, uint8_t selected_index)
-{
-    LOG_INF("Motor mode changed to %s", motor_mode_options[selected_index]);
-}
+// static void motor_mode_list_cb(struct menu_item_t *item, uint8_t selected_index)
+// {
+//     LOG_INF("Motor mode changed to %s", motor_mode_options[selected_index]);
+// }
 
-struct menu_item_t motor_mode_item = {
-    .name = "Mode",
-    .id = 7,
-    .style = MENU_STYLE_NORMAL,
-    .type = MENU_ITEM_TYPE_LIST,
-    .list = {
-        .options = motor_mode_options,
-        .num_options = ARRAY_SIZE(motor_mode_options),
-        .selected_index = 0,
-        .cb = motor_mode_list_cb,
-        .layout = MENU_LAYOUT_VERTICAL,
-        .title = "Select Mode",
-    },
-    .visible = true,
-};
+// struct menu_item_t motor_mode_item = {
+//     .name = "Mode",
+//     .id = 7,
+//     .style = MENU_STYLE_NORMAL,
+//     .type = MENU_ITEM_TYPE_LIST,
+//     .list = {
+//         .options = motor_mode_options,
+//         .num_options = ARRAY_SIZE(motor_mode_options),
+//         .selected_index = 0,
+//         .cb = motor_mode_list_cb,
+//         .layout = MENU_LAYOUT_VERTICAL,
+//         .title = "Select Mode",
+//     },
+//     .visible = true,
+// };
 
 static void speed_item_value_change_work(struct k_work *work)
 {
@@ -106,12 +108,12 @@ static void speed_item_value_change_func(struct adc_callback_t *self, uint16_t *
     k_work_submit(&item->input.work);
 }
 
-void motor_setup_menu_bind(struct motor_ctrl *ctrl, struct menu_t *menu)
+void mc_setup_menu_bind(struct mc_t *mc, struct menu_t *menu)
 {
     struct menu_group_t *motor_group;
-    static struct adc_callback_t speed_value_change_callback = {
+    static struct adc_callback_t speed_event_callback = {
         .func = speed_item_value_change_func,
-        .id = SPEED_CTRL,
+        .id = SPEED_VALUE,
     };
 
     motor_group = menu_group_create(menu, "Motor", 0, 5, 120, 75, COLOR_WHITE, MENU_LAYOUT_VERTICAL | MENU_ALIGN_V_CENTER, 0);
@@ -120,11 +122,11 @@ void motor_setup_menu_bind(struct motor_ctrl *ctrl, struct menu_t *menu)
 
 
     menu_group_add_item(motor_group, &motor_speed_item);
-    menu_group_add_item(motor_group, &motor_enable_item);
-    menu_group_add_item(motor_group, &motor_mode_item);
+    // menu_group_add_item(motor_group, &motor_enable_item);
+    // menu_group_add_item(motor_group, &motor_mode_item);
     menu_group_bind_item(motor_group, &setup_motor_item);
 
-    speed_value_change_callback.param = &motor_speed_item;
+    speed_event_callback.param = &motor_speed_item;
 
-    motor_ctrl_speed_register(ctrl, &speed_value_change_callback);
+    mc_adc_event_register(mc, &speed_event_callback);
 }

@@ -93,12 +93,12 @@ LOG_MODULE_DECLARE(menu, CONFIG_LOG_DEFAULT_LEVEL);
 // };
 
 extern void motor_ctrl(void *ctrl, bool enable);
-extern void menu_controller_start(struct menu_t *menu, void (*start)(void *, bool), bool en);
+extern void menu_driver_start(struct menu_t *menu, void (*start)(void *, bool), bool en);
 
 static void startup_checkbox_cb(struct menu_item_t *item, bool is_on)
 {
     LOG_INF("Startup checkbox is now %s", is_on ? "ON" : "OFF");
-    menu_controller_start(item->menu, &motor_ctrl, is_on);
+    // menu_driver_start(item->menu, &motor_ctrl, is_on);
     menu_disable_qdec(item->menu, is_on);
 }
 
@@ -163,7 +163,7 @@ int menu_init(const struct device *dev, struct menu_t **out)
     struct menu_group_t *main_group;
     struct menu_group_t *setup_group;
     extern struct menu_item_t setup_motor_item;
-    extern struct menu_item_t status_vbus_item;
+    // extern struct menu_item_t status_vbus_item;
 
     menu = menu_create(dev);
 
@@ -174,7 +174,7 @@ int menu_init(const struct device *dev, struct menu_t **out)
 
     status_group = menu_group_create(menu, "Status", 60, 5, 100, 75, COLOR_BLUE, MENU_LAYOUT_VERTICAL | MENU_ALIGN_V_CENTER, MENU_STYLE_LEFT);
     
-    menu_group_add_item(status_group, &status_vbus_item);
+    // menu_group_add_item(status_group, &status_vbus_item);
 
     main_group = menu_group_create(menu, "main", 0, 5, 55, 75, COLOR_WHITE, MENU_LAYOUT_VERTICAL | MENU_ALIGN_V_CENTER, MENU_STYLE_CENTER);
 

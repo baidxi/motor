@@ -11,12 +11,11 @@ target_sources(app PRIVATE
     src/menu.c
     src/menu/menu.c
     src/menu/pannel.c
-    src/motor/motor_menu.c
+    src/motor/menu.c
     src/motor/adc.c
-    src/motor/speed.c
-    src/motor/motor.c
+    src/motor/mc.c
     src/motor/svpwm.c
-    src/motor/controller.c
+    src/motor/motor.c
 )
 
 if(CONFIG_FONT_8X8)

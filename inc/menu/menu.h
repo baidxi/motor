@@ -207,6 +207,6 @@ extern void menu_set_main_group(struct menu_t *menu, struct menu_group_t *group)
 extern void menu_item_refresh(struct menu_item_t *item);
 extern bool menu_item_is_editing(struct menu_item_t *item);
 extern void menu_disable_qdec(struct menu_t *menu, bool disable);
-extern void menu_controller_bind(struct menu_t *menu, void *controller);
+extern void menu_driver_bind(struct menu_t *menu, void *driver);
 extern int menu_init(const struct device *dev, struct menu_t **out);
-extern void menu_controller_start(struct menu_t *menu, void (*start)(void *, bool), bool en);
+extern void menu_driver_start(struct menu_t *menu, void (*start)(void *, bool), bool en);

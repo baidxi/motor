@@ -6,7 +6,7 @@
 #define ADC_THREAD_STACK_SIZE   512
 #define OVER_SAMPLE 0
 
-struct motor_adc {
+struct adc_t {
     const struct adc_info *info;
     struct k_thread thread;
     k_tid_t tid;
@@ -18,7 +18,7 @@ struct motor_adc {
     struct adc_callback_t **callbacks;
     struct adc_user_data {
         uint8_t id;
-        struct motor_adc *adc;
+        struct adc_t *adc;
     } *user_data;
 };
 
@@ -41,7 +41,7 @@ static enum adc_action adc_done(const struct device *dev,
 
 static void adc_thread_entry(void *v1, void *v2, void *v3)
 {
-    struct motor_adc *adc = v1;
+    struct adc_t *adc = v1;
     const struct adc_channel_cfg *cfg;
     struct adc_sequence *seq;
     struct adc_sequence_options *options;
@@ -109,9 +109,9 @@ static void adc_thread_entry(void *v1, void *v2, void *v3)
 
 }
 
-struct motor_adc *adc_init(const struct adc_info *info)
+struct adc_t *adc_init(const struct adc_info *info)
 {
-    struct motor_adc *adc;
+    struct adc_t *adc;
     size_t alloc_size;
 
     if (info && (!info->channels || !info->dev || !info->nb_channels))
@@ -153,7 +153,7 @@ err:
     return NULL;
 }
 
-int adc_register_callback(struct motor_adc *adc, struct adc_callback_t *cb)
+int adc_register_callback(struct adc_t *adc, struct adc_callback_t *cb)
 {        
     struct adc_callback_t *callback;
 
@@ -177,7 +177,7 @@ int adc_register_callback(struct motor_adc *adc, struct adc_callback_t *cb)
     return -1;
 }
 
-void adc_start(struct motor_adc *adc)
+void adc_start(struct adc_t *adc)
 {
     k_thread_start(adc->tid);
 }
