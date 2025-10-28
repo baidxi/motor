@@ -17,3 +17,4 @@ struct svpwm_info {
 };
 
 struct svpwm_t *svpwm_init(const struct svpwm_info *info);
+void svpwm_freq_set(struct svpwm_t *pwm, uint16_t min, uint16_t max);

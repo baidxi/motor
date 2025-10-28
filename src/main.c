@@ -6,6 +6,7 @@
 
 #include <motor/adc.h>
 #include <motor/mc.h>
+#include <motor/motor.h>
 #include <motor/svpwm.h>
 
 #include <menu/menu.h>

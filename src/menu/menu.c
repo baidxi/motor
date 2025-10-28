@@ -1518,6 +1518,11 @@ void menu_driver_bind(struct menu_t *menu, void *driver)
     menu->driver = driver;
 }
 
+void *menu_driver_get(struct menu_t *menu)
+{
+    return menu->driver;
+}
+
 void menu_driver_start(struct menu_t *menu, void (*start)(void *, bool), bool en)
 {
     start(menu->driver, en);

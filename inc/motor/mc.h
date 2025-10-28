@@ -7,12 +7,6 @@ struct svpwm_info;
 struct adc_info;
 struct menu_t;
 struct adc_callback_t;
-
-enum motor_type {
-    MOTOR_TYPE_BLDC,
-    MOTOR_TYPE_FOC,
-};
-
 struct mc_t;
 
 struct mc_t *mc_init(uint8_t type, int nb_motor);
@@ -21,3 +15,5 @@ int mc_adc_init(struct mc_t *mc, const struct adc_info *info);
 void mc_setup_menu_bind(struct mc_t *mc, struct menu_t *menu);
 int mc_adc_event_register(struct mc_t *mc, struct adc_callback_t *cb);
 void mc_adc_start(struct mc_t *mc);
+struct motor_t *mc_motor_get(struct mc_t *mc, uint8_t id);
+int mc_motor_count(struct mc_t *mc);

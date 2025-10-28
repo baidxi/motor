@@ -4,6 +4,7 @@
 #include <motor/adc.h>
 #include <menu/menu.h>
 #include <motor/mc.h>
+#include <motor/motor.h>
 
 #include <stdint.h>
 
@@ -72,6 +73,27 @@ struct menu_item_t motor_speed_item = {
 //     .visible = true,
 // };
 
+const char *motor_type_options[] = {
+    "BLDC",
+    "DC",
+};
+
+static struct menu_item_t motor_type_item = {
+    .name = "Type",
+    .id = 5,
+    .style = MENU_STYLE_NORMAL,
+    .type = MENU_ITEM_TYPE_LIST,
+    .list = {
+        .options = motor_type_options,
+        .num_options = ARRAY_SIZE(motor_type_options),
+        .selected_index = 0,
+        .cb = motor_type_change_cb,
+        .layout = MENU_LAYOUT_VERTICAL,
+        .title = "Motor Type",
+    },
+    .visible = true,
+};
+
 static void speed_item_value_change_work(struct k_work *work)
 {
     struct item_input_t *input = CONTAINER_OF(work, struct item_input_t, work);
@@ -116,13 +138,14 @@ void mc_setup_menu_bind(struct mc_t *mc, struct menu_t *menu)
         .id = SPEED_VALUE,
     };
 
-    motor_group = menu_group_create(menu, "Motor", 0, 5, 120, 75, COLOR_WHITE, MENU_LAYOUT_VERTICAL | MENU_ALIGN_V_CENTER, 0);
+    motor_group = menu_group_create(menu, "Motor", 0, 5, 160, 75, COLOR_WHITE, MENU_LAYOUT_VERTICAL | MENU_ALIGN_V_CENTER, 0);
 
     k_work_init(&motor_speed_item.input.work, speed_item_value_change_work);
 
 
     menu_group_add_item(motor_group, &motor_speed_item);
-    // menu_group_add_item(motor_group, &motor_enable_item);
+    menu_group_add_item(motor_group, &motor_type_item);
+
     // menu_group_add_item(motor_group, &motor_mode_item);
     menu_group_bind_item(motor_group, &setup_motor_item);
 

@@ -210,3 +210,4 @@ extern void menu_disable_qdec(struct menu_t *menu, bool disable);
 extern void menu_driver_bind(struct menu_t *menu, void *driver);
 extern int menu_init(const struct device *dev, struct menu_t **out);
 extern void menu_driver_start(struct menu_t *menu, void (*start)(void *, bool), bool en);
+extern void *menu_driver_get(struct menu_t *menu);

@@ -26,6 +26,8 @@ struct mc_t *mc_init(uint8_t type, int nb_motor)
         mc->motors[i] = motor_init(type, i);
     }
 
+    mc->nb_motor = nb_motor;
+
     return mc;
 }
 
@@ -55,4 +57,17 @@ int mc_adc_event_register(struct mc_t *mc, struct adc_callback_t *cb)
 void mc_adc_start(struct mc_t *mc)
 {
     adc_start(mc->adc);
+}
+
+struct motor_t *mc_motor_get(struct mc_t *mc, uint8_t id)
+{
+    if (id > mc->nb_motor)
+        return NULL;
+
+    return mc->motors[id];
+}
+
+int mc_motor_count(struct mc_t *mc)
+{
+    return mc->nb_motor;
 }
