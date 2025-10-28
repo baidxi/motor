@@ -17,4 +17,7 @@ struct svpwm_info {
 };
 
 struct svpwm_t *svpwm_init(const struct svpwm_info *info);
-void svpwm_freq_set(struct svpwm_t *pwm, uint16_t min, uint16_t max);
+void svpwm_freq_set_range(struct svpwm_t *pwm, uint16_t min, uint16_t max);
+int svpwm_freq_set(struct svpwm_t *pwm, uint16_t freq);
+int svpwm_pulse_update(struct svpwm_t *pwm, uint8_t channel, uint16_t pulse);
+int svpwm_update_freq_and_pulse(struct svpwm_t *pwm, uint8_t channel, uint16_t freq, uint16_t pulse);

@@ -94,6 +94,7 @@ typedef enum {
     MENU_ITEM_TYPE_SWITCH,
     MENU_ITEM_TYPE_LIST,
     MENU_ITEM_TYPE_CHECKBOX,
+    MENU_ITEM_TYPE_INPUT_MIN_MAX,
 } menu_item_type_t;
 
 #define ADC_FILTER_WINDOW_SIZE 10
@@ -162,6 +163,18 @@ struct menu_item_t {
             uint16_t img_height;
         } checkbox;
     };
+    struct item_input_min_max_t {
+        int32_t min_value;
+        int32_t max_value;
+        int32_t editing_min_value;
+        int32_t editing_max_value;
+        int32_t min_limit;
+        int32_t max_limit;
+        int32_t step;
+        void (*cb)(struct menu_item_t *item, int32_t min, int32_t max);
+        uint8_t editing_target; // 0 for min, 1 for max, 2 for OK, 3 for Cancel
+        char rendered_value_str[32];
+    } input_min_max;
 };
 
 struct menu_group_t {

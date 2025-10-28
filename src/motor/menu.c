@@ -94,6 +94,22 @@ static struct menu_item_t motor_type_item = {
     .visible = true,
 };
 
+struct menu_item_t motor_pwm_freq_item = {
+   .name = "PWM Freq",
+   .id = 8,
+   .style = MENU_STYLE_NORMAL,
+   .type = MENU_ITEM_TYPE_INPUT_MIN_MAX,
+   .input_min_max = {
+       .min_value = 1000,
+       .max_value = 20000,
+       .min_limit = 500,
+       .max_limit = 50000,
+       .step = 100,
+       .cb = motor_svpwm_freq_set_cb,
+   },
+   .visible = true,
+};
+
 static void speed_item_value_change_work(struct k_work *work)
 {
     struct item_input_t *input = CONTAINER_OF(work, struct item_input_t, work);
@@ -152,4 +168,6 @@ void mc_setup_menu_bind(struct mc_t *mc, struct menu_t *menu)
     speed_event_callback.param = &motor_speed_item;
 
     mc_adc_event_register(mc, &speed_event_callback);
+
+    menu_group_add_item(motor_group, &motor_pwm_freq_item);
 }

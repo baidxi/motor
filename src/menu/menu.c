@@ -63,6 +63,7 @@ static void _menu_update_group_visibility_nolock(struct menu_t *menu);
 static struct menu_group_t *find_group_by_bind_item(struct menu_t *menu, struct menu_item_t *item);
 static void render_truncated_text(struct pannel_t *pannel, const char *text, uint16_t x, uint16_t y, uint16_t color, uint16_t max_width);
 static void menu_render_list_item_at_index(struct menu_t *menu, struct menu_item_t *item, uint8_t index, bool selected);
+static void menu_render_input_min_max_editing(struct menu_t *menu, struct menu_item_t *item);
 
 
 static void menu_render_group_chrome(struct menu_t *menu, struct menu_group_t *group)
@@ -170,7 +171,6 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
 
     uint16_t available_width = 0;
     if (item->group) {
-        // 2 pixels padding from the right edge of the group
         uint16_t group_right_edge = item->group->x + item->group->width - 2;
         if (text_x < group_right_edge) {
             available_width = group_right_edge - text_x;
@@ -261,6 +261,17 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
                     }
                 }
                 break;
+           case MENU_ITEM_TYPE_INPUT_MIN_MAX:
+           {
+               snprintf(temp_buf, sizeof(temp_buf), "%d-%d", item->input_min_max.min_value, item->input_min_max.max_value);
+               if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
+                   strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+               }
+               strncat(full_text, temp_buf, sizeof(full_text) - strlen(full_text) - 1);
+               strncpy(item->input_min_max.rendered_value_str, temp_buf, sizeof(item->input_min_max.rendered_value_str) - 1);
+               item->input_min_max.rendered_value_str[sizeof(item->input_min_max.rendered_value_str) - 1] = '\0';
+               break;
+           }
             default:
                 break;
         }
@@ -325,6 +336,63 @@ static void menu_render_list_editing(struct menu_t *menu, struct menu_item_t *it
     }
 }
 
+
+static void menu_render_input_min_max_item_part(struct menu_t *menu, struct menu_item_t *item, uint8_t target, bool selected)
+{
+   struct display_capabilities *caps;
+   pannel_get_capabilities(menu->pannel, &caps);
+   char buf[32];
+
+   if (target == 0) { // Min
+       uint16_t y_pos = 20;
+       snprintf(buf, sizeof(buf), "Min: %d", item->input_min_max.editing_min_value);
+       pannel_render_rect(menu->pannel, 10, y_pos, caps->x_resolution - 20, CONFIG_FONT_HEIGHT + 4, selected ? COLOR_WHITE : COLOR_BLACK, true);
+       pannel_render_txt(menu->pannel, (uint8_t *)buf, 12, y_pos + 2, selected ? COLOR_BLACK : COLOR_WHITE);
+   } else if (target == 1) { // Max
+       uint16_t y_pos = 20 + CONFIG_FONT_HEIGHT + 10;
+       snprintf(buf, sizeof(buf), "Max: %d", item->input_min_max.editing_max_value);
+       pannel_render_rect(menu->pannel, 10, y_pos, caps->x_resolution - 20, CONFIG_FONT_HEIGHT + 4, selected ? COLOR_WHITE : COLOR_BLACK, true);
+       pannel_render_txt(menu->pannel, (uint8_t *)buf, 12, y_pos + 2, selected ? COLOR_BLACK : COLOR_WHITE);
+   } else { // Buttons
+       uint16_t y_pos = 20 + CONFIG_FONT_HEIGHT + 10 + CONFIG_FONT_HEIGHT + 15;
+       uint16_t button_width = 40;
+       uint16_t button_spacing = 20;
+       uint16_t total_buttons_width = 2 * button_width + button_spacing;
+       uint16_t buttons_x_start = (caps->x_resolution - total_buttons_width) / 2;
+
+       if (target == 2) { // OK
+           pannel_render_rect(menu->pannel, buttons_x_start, y_pos, button_width, CONFIG_FONT_HEIGHT + 4, selected ? COLOR_WHITE : COLOR_BLACK, true);
+           pannel_render_txt(menu->pannel, (uint8_t *)"OK", buttons_x_start + (button_width - 2 * CONFIG_FONT_WIDTH) / 2, y_pos + 2, selected ? COLOR_BLACK : COLOR_WHITE);
+       } else if (target == 3) { // Cancel
+           pannel_render_rect(menu->pannel, buttons_x_start + button_width + button_spacing, y_pos, button_width, CONFIG_FONT_HEIGHT + 4, selected ? COLOR_WHITE : COLOR_BLACK, true);
+           pannel_render_txt(menu->pannel, (uint8_t *)"Cancel", buttons_x_start + button_width + button_spacing + (button_width - 6 * CONFIG_FONT_WIDTH) / 2, y_pos + 2, selected ? COLOR_BLACK : COLOR_WHITE);
+       }
+   }
+}
+
+static void menu_render_input_min_max_editing(struct menu_t *menu, struct menu_item_t *item)
+{
+    if (!menu || !item || item->type != MENU_ITEM_TYPE_INPUT_MIN_MAX) {
+        return;
+    }
+
+    struct display_capabilities *caps;
+    pannel_get_capabilities(menu->pannel, &caps);
+
+    pannel_render_rect(menu->pannel, 5, 5, caps->x_resolution - 10, caps->y_resolution - 10, COLOR_WHITE, false);
+
+    uint16_t title_len = strlen((const char *)item->name);
+    uint16_t title_width = title_len * CONFIG_FONT_WIDTH;
+    uint16_t title_x = (caps->x_resolution / 2) - (title_width / 2);
+    pannel_render_rect(menu->pannel, title_x - 2, 5, title_width + 4, 1, COLOR_BLACK, true);
+    pannel_render_txt(menu->pannel, (uint8_t *)item->name, title_x, 5 - (CONFIG_FONT_HEIGHT / 2), COLOR_WHITE);
+
+   menu_render_input_min_max_item_part(menu, item, 0, item->input_min_max.editing_target == 0);
+   menu_render_input_min_max_item_part(menu, item, 1, item->input_min_max.editing_target == 1);
+   menu_render_input_min_max_item_part(menu, item, 2, item->input_min_max.editing_target == 2);
+   menu_render_input_min_max_item_part(menu, item, 3, item->input_min_max.editing_target == 3);
+}
+
 static void menu_render_group(struct menu_t *menu, struct menu_group_t *group)
 {
     if (!menu || !group || !group->visible) {
@@ -380,6 +448,11 @@ static void menu_render(struct menu_t *menu)
         menu_render_list_editing(menu, menu->editing_item);
         return;
     }
+
+   if (menu->editing_item && menu->editing_item->type == MENU_ITEM_TYPE_INPUT_MIN_MAX) {
+       menu_render_input_min_max_editing(menu, menu->editing_item);
+       return;
+   }
 
     struct menu_group_t *group = menu->groups;
     while (group) {
@@ -468,6 +541,42 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                     menu_render_list_item_at_index(menu, menu->editing_item, menu->editing_item->list.editing_index, true);
                     k_mutex_unlock(&menu->pannel_mutex);
                 }
+           } else if (menu->editing_item && menu->editing_item->type == MENU_ITEM_TYPE_INPUT_MIN_MAX) {
+               struct item_input_min_max_t *min_max = &menu->editing_item->input_min_max;
+               if (min_max->editing_target < 2) {
+                   int32_t delta = event->value > 0 ? min_max->step : -min_max->step;
+                   if (min_max->editing_target == 0) {
+                       min_max->editing_min_value += delta;
+                       if (min_max->editing_min_value > min_max->editing_max_value) {
+                           min_max->editing_min_value = min_max->editing_max_value;
+                       }
+                       if (min_max->editing_min_value < min_max->min_limit) {
+                           min_max->editing_min_value = min_max->min_limit;
+                       }
+                   } else {
+                       min_max->editing_max_value += delta;
+                       if (min_max->editing_max_value < min_max->editing_min_value) {
+                           min_max->editing_max_value = min_max->editing_min_value;
+                       }
+                       if (min_max->editing_max_value > min_max->max_limit) {
+                           min_max->editing_max_value = min_max->max_limit;
+                       }
+                   }
+
+                   k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+                   menu_render_input_min_max_item_part(menu, menu->editing_item, min_max->editing_target, true);
+                   k_mutex_unlock(&menu->pannel_mutex);
+               } else {
+                   if (event->value != 0) {
+                       uint8_t old_target = min_max->editing_target;
+                       min_max->editing_target = (old_target == 2) ? 3 : 2;
+
+                       k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+                       menu_render_input_min_max_item_part(menu, menu->editing_item, old_target, false);
+                       menu_render_input_min_max_item_part(menu, menu->editing_item, min_max->editing_target, true);
+                       k_mutex_unlock(&menu->pannel_mutex);
+                   }
+               }
             } else if (menu->group_stack_top > -1) {
                 if (menu->editing_item) {
                     break;
@@ -532,42 +641,73 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
 
         case INPUT_TYPE_KEY1:
             if (event->pressed) {
-                if (menu->editing_item) {
-                    struct menu_item_t *item_exiting_edit = menu->editing_item;
+               if (menu->editing_item) {
+                   if (menu->editing_item->type == MENU_ITEM_TYPE_INPUT_MIN_MAX) {
+                       struct item_input_min_max_t *min_max = &menu->editing_item->input_min_max;
+                       uint8_t old_target = min_max->editing_target;
 
-                    switch (item_exiting_edit->type) {
-                        case MENU_ITEM_TYPE_INPUT:
-                            item_exiting_edit->input.value = item_exiting_edit->input.editing_value;
-                            if (item_exiting_edit->input.cb) {
-                                if (item_exiting_edit->input.cb(item_exiting_edit, &ev)) {
-                                    item_exiting_edit->input.value = ev.value;
-                                }
-                            }
-                            break;
-                        case MENU_ITEM_TYPE_SWITCH:
-                            item_exiting_edit->switch_ctrl.is_on = item_exiting_edit->switch_ctrl.editing_is_on;
-                            if (item_exiting_edit->switch_ctrl.cb) {
-                                item_exiting_edit->switch_ctrl.cb(item_exiting_edit, item_exiting_edit->switch_ctrl.is_on);
-                            }
-                            break;
-                        case MENU_ITEM_TYPE_LIST:
-                            item_exiting_edit->list.selected_index = item_exiting_edit->list.editing_index;
-                            if (item_exiting_edit->list.cb) {
-                                item_exiting_edit->list.cb(item_exiting_edit, item_exiting_edit->list.selected_index);
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                    
-                    if (item_exiting_edit->type == MENU_ITEM_TYPE_INPUT || item_exiting_edit->type == MENU_ITEM_TYPE_SWITCH) {
-                        menu->item_to_refresh = item_exiting_edit;
-                    } else {
-                        force_render = true;
-                    }
-                    menu->editing_item = NULL;
-                } else if (menu->current_item) { // We are not in edit mode, this key press is to enter edit mode or navigate
+                       if (min_max->editing_target < 2) {
+                           min_max->editing_target++;
+                           k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+                           menu_render_input_min_max_item_part(menu, menu->editing_item, old_target, false);
+                           menu_render_input_min_max_item_part(menu, menu->editing_item, min_max->editing_target, true);
+                           k_mutex_unlock(&menu->pannel_mutex);
+                       } else if (min_max->editing_target == 2) {
+                           min_max->min_value = min_max->editing_min_value;
+                           min_max->max_value = min_max->editing_max_value;
+                           if (min_max->cb) {
+                               min_max->cb(menu->editing_item, min_max->min_value, min_max->max_value);
+                           }
+                           menu->editing_item = NULL;
+                           force_render = true;
+                       } else {
+                           menu->editing_item = NULL;
+                           force_render = true;
+                       }
+                   } else {
+                       struct menu_item_t *item_exiting_edit = menu->editing_item;
+
+                       switch (item_exiting_edit->type) {
+                           case MENU_ITEM_TYPE_INPUT:
+                               item_exiting_edit->input.value = item_exiting_edit->input.editing_value;
+                               if (item_exiting_edit->input.cb) {
+                                   if (item_exiting_edit->input.cb(item_exiting_edit, &ev)) {
+                                       item_exiting_edit->input.value = ev.value;
+                                   }
+                               }
+                               break;
+                           case MENU_ITEM_TYPE_SWITCH:
+                               item_exiting_edit->switch_ctrl.is_on = item_exiting_edit->switch_ctrl.editing_is_on;
+                               if (item_exiting_edit->switch_ctrl.cb) {
+                                   item_exiting_edit->switch_ctrl.cb(item_exiting_edit, item_exiting_edit->switch_ctrl.is_on);
+                               }
+                               break;
+                           case MENU_ITEM_TYPE_LIST:
+                               item_exiting_edit->list.selected_index = item_exiting_edit->list.editing_index;
+                               if (item_exiting_edit->list.cb) {
+                                   item_exiting_edit->list.cb(item_exiting_edit, item_exiting_edit->list.selected_index);
+                               }
+                               break;
+                           default:
+                               break;
+                       }
+                       
+                       if (item_exiting_edit->type == MENU_ITEM_TYPE_INPUT || item_exiting_edit->type == MENU_ITEM_TYPE_SWITCH) {
+                           menu->item_to_refresh = item_exiting_edit;
+                       } else {
+                           force_render = true;
+                       }
+                       menu->editing_item = NULL;
+                   }
+                } else if (menu->current_item) {
                     switch (menu->current_item->type) {
+                       case MENU_ITEM_TYPE_INPUT_MIN_MAX:
+                           menu->editing_item = menu->current_item;
+                           menu->editing_item->input_min_max.editing_min_value = menu->editing_item->input_min_max.min_value;
+                           menu->editing_item->input_min_max.editing_max_value = menu->editing_item->input_min_max.max_value;
+                           menu->editing_item->input_min_max.editing_target = 0;
+                           force_render = true;
+                           break;
                         case MENU_ITEM_TYPE_INPUT:
                             menu->editing_item = menu->current_item;
                             menu->editing_item->input.editing_value = menu->editing_item->input.live_value;
@@ -636,17 +776,22 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
         case INPUT_TYPE_KEY2:
             if (event->pressed) {
                 if (menu->editing_item) {
-                    struct menu_item_t *item_exiting_edit = menu->editing_item;
-                    if (item_exiting_edit->type == MENU_ITEM_TYPE_INPUT && item_exiting_edit->input.cb) {
-                        item_exiting_edit->input.cb(item_exiting_edit, NULL); // Notify callback of cancellation
-                    }
-                    
-                    if (item_exiting_edit->type == MENU_ITEM_TYPE_INPUT || item_exiting_edit->type == MENU_ITEM_TYPE_SWITCH) {
-                        menu->item_to_refresh = item_exiting_edit;
-                    } else {
-                        force_render = true;
-                    }
-                    menu->editing_item = NULL;
+                   if (menu->editing_item->type == MENU_ITEM_TYPE_INPUT_MIN_MAX) {
+                       menu->editing_item = NULL;
+                       force_render = true;
+                   } else {
+                       struct menu_item_t *item_exiting_edit = menu->editing_item;
+                       if (item_exiting_edit->type == MENU_ITEM_TYPE_INPUT && item_exiting_edit->input.cb) {
+                           item_exiting_edit->input.cb(item_exiting_edit, NULL); // Notify callback of cancellation
+                       }
+                       
+                       if (item_exiting_edit->type == MENU_ITEM_TYPE_INPUT || item_exiting_edit->type == MENU_ITEM_TYPE_SWITCH) {
+                           menu->item_to_refresh = item_exiting_edit;
+                       } else {
+                           force_render = true;
+                       }
+                       menu->editing_item = NULL;
+                   }
                 } else if (menu->group_stack_top > -1) {
                     struct menu_group_t *exited_group = menu->group_stack[menu->group_stack_top];
                     menu->group_stack[menu->group_stack_top] = NULL;
