@@ -48,7 +48,7 @@ struct svpwm_t *svpwm_init(const struct svpwm_info *info)
 int svpwm_freq_set(struct svpwm_t *pwm, uint16_t freq)
 {
     const struct svpwm_channel_info *ch;
-    uint32_t period_cycles;
+    uint32_t period_cycles = 0;
     int ret, i;
 
     if (freq > pwm->freq_max || freq < pwm->freq_min)
@@ -79,21 +79,6 @@ int svpwm_update_freq_and_pulse(struct svpwm_t *pwm, uint8_t channel, uint16_t f
     uint32_t period_cycles = pwm->cycles_per_sec / freq;
     uint32_t pulse_cycles = pwm->cycles_per_sec / pulse;
 
-    if (period_cycles > pwm->freq_max || period_cycles < pwm->freq_min)
-    {
-        return -ERANGE;
-    }
-
-    if (pulse_cycles > period_cycles)
-    {
-        return -ERANGE;
-    }
-
-    if (channel > (pwm->info->nb_channels - 1))
-    {
-        return -EINVAL;
-    }
-
     ch = &pwm->info->channels[channel];
 
     pwm->freq_curr = period_cycles;
@@ -103,17 +88,10 @@ int svpwm_update_freq_and_pulse(struct svpwm_t *pwm, uint8_t channel, uint16_t f
 
 }
 
-int svpwm_pulse_update(struct svpwm_t *pwm, uint8_t channel, uint16_t pulse)
+int svpwm_update_pulse(struct svpwm_t *pwm, uint8_t channel, uint16_t pulse)
 {
     const struct svpwm_channel_info *ch;
     int ret;
-
-    if (channel > (pwm->info->nb_channels - 1))
-        return -EINVAL;
-
-
-    if (pulse > pwm->freq_curr)
-        return -ERANGE;
 
     ch = &pwm->info->channels[channel];
 

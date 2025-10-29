@@ -165,6 +165,7 @@ int adc_register_callback(struct adc_t *adc, struct adc_callback_t *cb)
 
     if (adc)
     {
+        cb->next = NULL;
         callback = adc->callbacks[cb->id];
         if (!callback) {
             adc->callbacks[cb->id] = cb;

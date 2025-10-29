@@ -188,7 +188,7 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
 
     if (item->style & MENU_STYLE_LABEL && item->label_cb) {
         item->label_cb(item, temp_buf, sizeof(temp_buf));
-        strncat(full_text, " ", sizeof(full_text) - strlen(full_text) - 1);
+        strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
         strncat(full_text, temp_buf, sizeof(full_text) - strlen(full_text) - 1);
     } else {
         switch(item->type) {

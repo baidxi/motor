@@ -10,6 +10,8 @@
 
 LOG_MODULE_REGISTER(motor_menu, CONFIG_LOG_DEFAULT_LEVEL);
 
+static void motor_voltage_range_set_cb(struct menu_item_t *item, int32_t min, int32_t max);
+
 struct menu_item_t setup_motor_item = {
     .name = "Motor",
     .id = 3,
@@ -18,7 +20,7 @@ struct menu_item_t setup_motor_item = {
 
 struct menu_item_t motor_speed_item = {
     .name = "Speed",
-    .id = 4,
+    .id = 6,
     .style = MENU_STYLE_NORMAL | MENU_STYLE_VALUE_LABEL,
     .type = MENU_ITEM_TYPE_INPUT,
     .input = {
@@ -80,7 +82,7 @@ const char *motor_type_options[] = {
 
 static struct menu_item_t motor_type_item = {
     .name = "Type",
-    .id = 5,
+    .id = 7,
     .style = MENU_STYLE_NORMAL,
     .type = MENU_ITEM_TYPE_LIST,
     .list = {
@@ -94,9 +96,9 @@ static struct menu_item_t motor_type_item = {
     .visible = true,
 };
 
-struct menu_item_t motor_pwm_freq_item = {
+static struct menu_item_t motor_pwm_freq_item = {
    .name = "PWM Freq",
-   .id = 8,
+   .id = 9,
    .style = MENU_STYLE_NORMAL,
    .type = MENU_ITEM_TYPE_INPUT_MIN_MAX,
    .input_min_max = {
@@ -109,6 +111,27 @@ struct menu_item_t motor_pwm_freq_item = {
    },
    .visible = true,
 };
+
+static struct menu_item_t motor_voltage_item = {
+   .name = "Motor Voltage",
+   .id = 8,
+   .style = MENU_STYLE_NORMAL,
+   .type = MENU_ITEM_TYPE_INPUT_MIN_MAX,
+   .input_min_max = {
+       .min_value = 6000,
+       .max_value = 24000,
+       .min_limit = 6000,
+       .max_limit = 24000,
+       .step = 100,
+       .cb = motor_voltage_range_set_cb,
+   },
+   .visible = true,
+};
+
+static void motor_voltage_range_set_cb(struct menu_item_t *item, int32_t min, int32_t max)
+{
+    mc_motor_voltage_range_set(menu_driver_get(item->menu), min, max);
+}
 
 static void speed_item_value_change_work(struct k_work *work)
 {
@@ -161,6 +184,7 @@ void mc_setup_menu_bind(struct mc_t *mc, struct menu_t *menu)
 
     menu_group_add_item(motor_group, &motor_speed_item);
     menu_group_add_item(motor_group, &motor_type_item);
+    menu_group_add_item(motor_group, &motor_voltage_item);
 
     // menu_group_add_item(motor_group, &motor_mode_item);
     menu_group_bind_item(motor_group, &setup_motor_item);
