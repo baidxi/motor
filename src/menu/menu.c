@@ -50,8 +50,11 @@ struct menu_t {
     struct sensor_trigger trigger;
     bool disable_qdec;
     void *driver;
+    struct k_timer label_refresh_timer;
+    struct k_work label_refresh_work;
 };
 
+static void label_refresh_work_handler(struct k_work *work);
 static struct menu_item_t *find_menu_item_by_id(struct menu_item_t *root, uint8_t id);
 static void menu_get_item_layout(struct menu_group_t *group, struct menu_item_t *item_to_find, uint16_t *out_x, uint16_t *out_y, uint16_t *out_w);
 static void menu_refresh_item_selection(struct menu_t *menu, struct menu_item_t *last_item, struct menu_item_t *current_item);
@@ -146,7 +149,7 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
         strncpy(item->input.rendered_value_str, value_buf, sizeof(item->input.rendered_value_str) - 1);
         item->input.rendered_value_str[sizeof(item->input.rendered_value_str) - 1] = '\0';
         content_width += (5 + strlen(value_buf)) * CONFIG_FONT_WIDTH;
-    } else if (item->style & MENU_STYLE_LABEL && item->label_cb) {
+    } else if (item->type == MENU_ITEM_TYPE_LABEL && item->label_cb) {
         char label_buf[32] = {0};
         item->label_cb(item, label_buf, sizeof(label_buf));
         content_width += 1 + strlen(label_buf) * CONFIG_FONT_WIDTH;
@@ -186,82 +189,86 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
         strncat(full_text, (const char *)item->name, sizeof(full_text) - strlen(full_text) - 1);
     }
 
-    if (item->style & MENU_STYLE_LABEL && item->label_cb) {
-        item->label_cb(item, temp_buf, sizeof(temp_buf));
-        strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
-        strncat(full_text, temp_buf, sizeof(full_text) - strlen(full_text) - 1);
-    } else {
-        switch(item->type) {
-            case MENU_ITEM_TYPE_INPUT:
-                if (!item->input.value_get_str_cb || (value_buf[0] != ':' && value_buf[0] != ' ')) {
-                    strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
-                }
-                strncat(full_text, value_buf, sizeof(full_text) - strlen(full_text) - 1);
-                break;
-            case MENU_ITEM_TYPE_SWITCH:
-                bool is_on = (menu->editing_item == item) ? item->switch_ctrl.editing_is_on : item->switch_ctrl.is_on;
-                const char *switch_str;
-                if (is_on) {
-                    switch_str = item->switch_ctrl.text_on ? item->switch_ctrl.text_on : "ON";
-                } else {
-                    switch_str = item->switch_ctrl.text_off ? item->switch_ctrl.text_off : "OFF";
-                }
+    switch(item->type) {
+        case MENU_ITEM_TYPE_LABEL:
+            if (item->label_cb) {
+                item->label_cb(item, temp_buf, sizeof(temp_buf));
+                strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+                strncat(full_text, temp_buf, sizeof(full_text) - strlen(full_text) - 1);
+                strncpy(item->label.rendered_label_str, temp_buf, sizeof(item->label.rendered_label_str) - 1);
+                item->label.rendered_label_str[sizeof(item->label.rendered_label_str) - 1] = '\0';
+            }
+            break;
+        case MENU_ITEM_TYPE_INPUT:
+            if (!item->input.value_get_str_cb || (value_buf[0] != ':' && value_buf[0] != ' ')) {
+                strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+            }
+            strncat(full_text, value_buf, sizeof(full_text) - strlen(full_text) - 1);
+            break;
+        case MENU_ITEM_TYPE_SWITCH:
+            bool is_on = (menu->editing_item == item) ? item->switch_ctrl.editing_is_on : item->switch_ctrl.is_on;
+            const char *switch_str;
+            if (is_on) {
+                switch_str = item->switch_ctrl.text_on ? item->switch_ctrl.text_on : "ON";
+            } else {
+                switch_str = item->switch_ctrl.text_off ? item->switch_ctrl.text_off : "OFF";
+            }
 
-                if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
-                    strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
-                }
-                strncat(full_text, switch_str, sizeof(full_text) - strlen(full_text) - 1);
-                strncpy(item->switch_ctrl.rendered_value_str, switch_str, sizeof(item->switch_ctrl.rendered_value_str) - 1);
-                item->switch_ctrl.rendered_value_str[sizeof(item->switch_ctrl.rendered_value_str) - 1] = '\0';
-                break;
-            case MENU_ITEM_TYPE_LIST:
-                if (menu->editing_item == item) {
-                // In editing mode, we might just show the name, as the list is rendered separately
-                } else {
-                    if (item->list.num_options > 0 && item->list.selected_index < item->list.num_options) {
-                        const char *selected_option = item->list.options[item->list.selected_index];
-                        if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
-                            strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
-                        }
-                        strncat(full_text, selected_option, sizeof(full_text) - strlen(full_text) - 1);
-                        strncpy(item->list.rendered_value_str, selected_option, sizeof(item->list.rendered_value_str) - 1);
-                        item->list.rendered_value_str[sizeof(item->list.rendered_value_str) - 1] = '\0';
+            if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
+                strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
+            }
+            strncat(full_text, switch_str, sizeof(full_text) - strlen(full_text) - 1);
+            strncpy(item->switch_ctrl.rendered_value_str, switch_str, sizeof(item->switch_ctrl.rendered_value_str) - 1);
+            item->switch_ctrl.rendered_value_str[sizeof(item->switch_ctrl.rendered_value_str) - 1] = '\0';
+            break;
+        case MENU_ITEM_TYPE_LIST:
+            if (menu->editing_item == item) {
+            // In editing mode, we might just show the name, as the list is rendered separately
+            } else {
+                if (item->list.num_options > 0 && item->list.selected_index < item->list.num_options) {
+                    const char *selected_option = item->list.options[item->list.selected_index];
+                    if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
+                        strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
                     }
+                    strncat(full_text, selected_option, sizeof(full_text) - strlen(full_text) - 1);
+                    strncpy(item->list.rendered_value_str, selected_option, sizeof(item->list.rendered_value_str) - 1);
+                    item->list.rendered_value_str[sizeof(item->list.rendered_value_str) - 1] = '\0';
                 }
-                break;
-            case MENU_ITEM_TYPE_CHECKBOX:
-                {
-                    if (item->style & MENU_STYLE_CHECKBOX_IMG) {
-                        const uint8_t *img_buf = item->checkbox.is_on ?
-                                                 (const uint8_t *)item->checkbox.text_on :
-                                                 (const uint8_t *)item->checkbox.text_off;
-                        if (img_buf) {
-                            uint16_t img_x = x;
-                            if (item->style & MENU_STYLE_CENTER) {
-                                img_x = x + (render_width - item->checkbox.img_width) / 2;
-                            } else if (item->style & MENU_STYLE_RIGHT) {
-                                img_x = x + render_width - item->checkbox.img_width;
-                            }
-                            pannel_render_buffer(menu->pannel, img_x, y, item->checkbox.img_width, item->checkbox.img_height, (uint8_t *)img_buf);
+            }
+            break;
+        case MENU_ITEM_TYPE_CHECKBOX:
+            {
+                if (item->style & MENU_STYLE_CHECKBOX_IMG) {
+                    const uint8_t *img_buf = item->checkbox.is_on ?
+                                                (const uint8_t *)item->checkbox.text_on :
+                                                (const uint8_t *)item->checkbox.text_off;
+                    if (img_buf) {
+                        uint16_t img_x = x;
+                        if (item->style & MENU_STYLE_CENTER) {
+                            img_x = x + (render_width - item->checkbox.img_width) / 2;
+                        } else if (item->style & MENU_STYLE_RIGHT) {
+                            img_x = x + render_width - item->checkbox.img_width;
                         }
-                        full_text[0] = '\0'; // Clear text to prevent rendering
+                        pannel_render_buffer(menu->pannel, img_x, y, item->checkbox.img_width, item->checkbox.img_height, (uint8_t *)img_buf);
+                    }
+                    full_text[0] = '\0'; // Clear text to prevent rendering
+                } else {
+                    const char *checkbox_str = item->checkbox.is_on ?
+                                                (item->checkbox.text_on ? item->checkbox.text_on : "ON") :
+                                                (item->checkbox.text_off ? item->checkbox.text_off : "OFF");
+
+                    if (item->style & MENU_STYLE_VALUE_ONLY) {
+                        full_text[0] = '\0';
                     } else {
-                        const char *checkbox_str = item->checkbox.is_on ?
-                                                   (item->checkbox.text_on ? item->checkbox.text_on : "ON") :
-                                                   (item->checkbox.text_off ? item->checkbox.text_off : "OFF");
-
-                        if (item->style & MENU_STYLE_VALUE_ONLY) {
-                            full_text[0] = '\0';
-                        } else {
-                            strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
-                        }
-                        strncat(full_text, checkbox_str, sizeof(full_text) - strlen(full_text) - 1);
-                        strncpy(item->checkbox.rendered_value_str, checkbox_str, sizeof(item->checkbox.rendered_value_str) - 1);
-                        item->checkbox.rendered_value_str[sizeof(item->checkbox.rendered_value_str) - 1] = '\0';
+                        strncat(full_text, ":", sizeof(full_text) - strlen(full_text) - 1);
                     }
+                    strncat(full_text, checkbox_str, sizeof(full_text) - strlen(full_text) - 1);
+                    strncpy(item->checkbox.rendered_value_str, checkbox_str, sizeof(item->checkbox.rendered_value_str) - 1);
+                    item->checkbox.rendered_value_str[sizeof(item->checkbox.rendered_value_str) - 1] = '\0';
                 }
-                break;
-           case MENU_ITEM_TYPE_INPUT_MIN_MAX:
+            }
+            break;
+        case MENU_ITEM_TYPE_INPUT_MIN_MAX:
            {
                snprintf(temp_buf, sizeof(temp_buf), "%d-%d", item->input_min_max.min_value, item->input_min_max.max_value);
                if (!(item->style & MENU_STYLE_VALUE_ONLY)) {
@@ -272,9 +279,8 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
                item->input_min_max.rendered_value_str[sizeof(item->input_min_max.rendered_value_str) - 1] = '\0';
                break;
            }
-            default:
+        default:
                 break;
-        }
     }
 
     render_truncated_text(menu->pannel, full_text, text_x, text_y, text_color, available_width);
@@ -583,7 +589,7 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                 }
                 if (event->value > 0) {
                     struct menu_item_t *next_item = menu->current_item->group_next;
-                    while (next_item && ((next_item->style & MENU_STYLE_LABEL) || !next_item->visible || (next_item->style & MENU_STYLE_NON_NAVIGABLE))) {
+                    while (next_item && (next_item->type == MENU_ITEM_TYPE_LABEL || !next_item->visible || (next_item->style & MENU_STYLE_NON_NAVIGABLE))) {
                         next_item = next_item->group_next;
                     }
                     if (next_item) {
@@ -591,7 +597,7 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                     }
                 } else if (event->value < 0) {
                     struct menu_item_t *prev_item = menu->current_item->group_prev;
-                    while (prev_item && ((prev_item->style & MENU_STYLE_LABEL) || !prev_item->visible || (prev_item->style & MENU_STYLE_NON_NAVIGABLE))) {
+                    while (prev_item && (prev_item->type == MENU_ITEM_TYPE_LABEL || !prev_item->visible || (prev_item->style & MENU_STYLE_NON_NAVIGABLE))) {
                         prev_item = prev_item->group_prev;
                     }
                     if (prev_item) {
@@ -606,7 +612,7 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                 if (event->value > 0) {
                     struct menu_item_t *next_item = menu->current_item->next;
                     while (next_item) {
-                        bool is_label = next_item->style & MENU_STYLE_LABEL;
+                        bool is_label = next_item->type == MENU_ITEM_TYPE_LABEL;
                         bool is_hidden = !next_item->visible;
                         bool in_inactive_group = next_item->group && !next_item->group->always_visible && next_item->group->bind_item != NULL;
                         bool is_non_navigable = next_item->style & MENU_STYLE_NON_NAVIGABLE;
@@ -622,7 +628,7 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                 } else if (event->value < 0) {
                     struct menu_item_t *prev_item = menu->current_item->prev;
                     while (prev_item) {
-                        bool is_label = prev_item->style & MENU_STYLE_LABEL;
+                        bool is_label = prev_item->type == MENU_ITEM_TYPE_LABEL;
                         bool is_hidden = !prev_item->visible;
                         bool in_inactive_group = prev_item->group && !prev_item->group->always_visible && prev_item->group->bind_item != NULL;
                         bool is_non_navigable = prev_item->style & MENU_STYLE_NON_NAVIGABLE;
@@ -753,7 +759,7 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                                         force_render = true;
 
                                         struct menu_item_t *first_item = bound_group->items;
-                                        while(first_item && ((first_item->style & MENU_STYLE_LABEL) || !first_item->visible)) {
+                                        while(first_item && (first_item->type == MENU_ITEM_TYPE_LABEL || !first_item->visible)) {
                                             first_item = first_item->group_next;
                                         }
                                         if (first_item) {
@@ -927,6 +933,46 @@ static void menu_state_qdec_cb(const struct device *dev,
 
 }
 
+static void label_refresh_work_handler(struct k_work *work)
+{
+    struct menu_t *menu = CONTAINER_OF(work, struct menu_t, label_refresh_work);
+    struct menu_group_t *group;
+    struct menu_item_t *item;
+    char new_label_buf[32];
+
+    k_mutex_lock(&menu->state_mutex, K_FOREVER);
+
+    group = menu->groups;
+    while (group) {
+        if (group->visible) {
+            item = group->items;
+            while (item) {
+                if (item->visible && item->type == MENU_ITEM_TYPE_LABEL && item->label_cb) {
+                    item->label_cb(item, new_label_buf, sizeof(new_label_buf));
+                    if (strcmp(new_label_buf, item->label.rendered_label_str) != 0) {
+                        /*
+                         * Data has changed. Queue an update request for the UI thread.
+                         * DO NOT call rendering functions from this worker thread.
+                         * The value in the message (0) is ignored for LABEL types.
+                         */
+                        menu_item_queue_update(item, 0);
+                    }
+                }
+                item = item->group_next;
+            }
+        }
+        group = group->next;
+    }
+
+    k_mutex_unlock(&menu->state_mutex);
+}
+
+static void label_refresh_timer_cb(struct k_timer *timer)
+{
+    struct menu_t *menu = CONTAINER_OF(timer, struct menu_t, label_refresh_timer);
+    k_work_submit(&menu->label_refresh_work);
+}
+
 static void menu_state_machine_func(void *v1, void *v2, void *v3)
 {
     struct menu_t *menu = (struct menu_t *)v1;
@@ -964,6 +1010,8 @@ static void menu_state_machine_func(void *v1, void *v2, void *v3)
     menu_update_group_visibility(menu);
     menu->needs_render = true;
     k_sem_give(&menu->render_sem);
+
+    k_timer_start(&menu->label_refresh_timer, K_MSEC(500), K_MSEC(500));
     
     menu->adc2_dev = DEVICE_DT_GET(DT_ALIAS(adc2));
 
@@ -1007,8 +1055,10 @@ static void menu_state_machine_func(void *v1, void *v2, void *v3)
                 if (k_msgq_get(&menu->update_msgq, &msg, K_NO_WAIT) == 0) {
                     k_mutex_lock(&menu->state_mutex, K_FOREVER);
                     if (msg.item && msg.item != menu->editing_item) {
-                        msg.item->input.value = msg.value;
-                        menu_item_refresh(msg.item);
+                        if (msg.item->type == MENU_ITEM_TYPE_INPUT) {
+                            msg.item->input.value = msg.value;
+                        }
+                        menu_refresh_single_item(menu, msg.item);
                     }
                     k_mutex_unlock(&menu->state_mutex);
                 }
@@ -1096,6 +1146,10 @@ struct menu_t *menu_create(const struct device *render_dev)
     k_mutex_init(&menu->pannel_mutex);
     k_mutex_init(&menu->state_mutex);
     k_msgq_init(&menu->update_msgq, g_update_msgq_buffer, sizeof(struct menu_update_msg), MENU_UPDATE_MSGQ_MAX_MSGS);
+    
+    k_timer_init(&menu->label_refresh_timer, label_refresh_timer_cb, NULL);
+    k_work_init(&menu->label_refresh_work, label_refresh_work_handler);
+
     menu->group_stack_top = -1;
     menu->group_to_refresh = NULL;
     menu->item_nav_from = NULL;
@@ -1308,7 +1362,7 @@ int menu_group_add_item(struct menu_group_t *group, struct menu_item_t *item)
     item->group = group;
     item->menu = group->menu;
 
-    if (group->menu && !(item->style & MENU_STYLE_LABEL)) {
+    if (group->menu && item->type != MENU_ITEM_TYPE_LABEL) {
         menu_item_add(group->menu, item, 0);
     }
 
@@ -1609,10 +1663,10 @@ void menu_item_refresh(struct menu_item_t *item)
 				current_item_width += 5 + strlen(value_buf) * CONFIG_FONT_WIDTH;
             } else if (current_item_in_loop->type == MENU_ITEM_TYPE_SWITCH) {
                 current_item_width += 5 + strlen("OFF") * CONFIG_FONT_WIDTH;
-            } else if (current_item_in_loop->style & MENU_STYLE_LABEL && current_item_in_loop->label_cb) {
-				char label_buf[32] = {0};
-				current_item_in_loop->label_cb(current_item_in_loop, label_buf, sizeof(label_buf));
-				current_item_width += 1 + strlen(label_buf) * CONFIG_FONT_WIDTH;
+            } else if (current_item_in_loop->type == MENU_ITEM_TYPE_LABEL && current_item_in_loop->label_cb) {
+    char label_buf[32] = {0};
+    current_item_in_loop->label_cb(current_item_in_loop, label_buf, sizeof(label_buf));
+    current_item_width += 1 + strlen(label_buf) * CONFIG_FONT_WIDTH;
 			}
 			if (current_item_width > max_item_width) {
 				max_item_width = current_item_width;

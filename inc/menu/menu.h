@@ -46,7 +46,6 @@ typedef void (*menu_item_checkbox_cb_t)(struct menu_item_t *item, bool is_on);
 #define MENU_STYLE_CENTER         0x00000040  // 居中对齐
 #define MENU_STYLE_RIGHT          0x00000080  // 右对齐
 #define MENU_STYLE_LEFT           0x00000100  // 左对齐
-#define MENU_STYLE_LABEL          0x00000200  // 标签样式
 #define MENU_STYLE_VALUE_LABEL    0x00000400  // 带数值的标签样式
 #define MENU_STYLE_NON_NAVIGABLE  0x00000800  // 不可导航
 #define MENU_STYLE_VALUE_ONLY     0x00001000  // 只渲染值
@@ -95,6 +94,7 @@ typedef enum {
     MENU_ITEM_TYPE_LIST,
     MENU_ITEM_TYPE_CHECKBOX,
     MENU_ITEM_TYPE_INPUT_MIN_MAX,
+    MENU_ITEM_TYPE_LABEL,
 } menu_item_type_t;
 
 #define ADC_FILTER_WINDOW_SIZE 10
@@ -162,6 +162,9 @@ struct menu_item_t {
             uint16_t img_width;
             uint16_t img_height;
         } checkbox;
+        struct item_label_t {
+            char rendered_label_str[32];
+        } label;
     };
     struct item_input_min_max_t {
         int32_t min_value;

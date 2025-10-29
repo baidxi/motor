@@ -18,6 +18,7 @@ int mc_adc_event_register(struct mc_t *mc, struct adc_callback_t *cb);
 void mc_adc_start(struct mc_t *mc);
 struct motor_t *mc_motor_get(struct mc_t *mc, uint8_t id);
 int mc_motor_count(struct mc_t *mc);
-void mc_motor_ready(struct mc_t *mc, bool is_ready);
+bool mc_motor_ready(struct mc_t *mc, bool is_ready);
 void mc_motor_voltage_range_set(struct mc_t *mc, int min, int max);
 double mc_vbus_get(struct mc_t *mc);
+bool mc_motor_voltage_check(struct mc_t *mc);

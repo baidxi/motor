@@ -1,6 +1,5 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-
 #include <motor/adc.h>
 
 #define ADC_THREAD_STACK_SIZE   512
@@ -126,6 +125,13 @@ struct adc_t *adc_init(const struct adc_info *info)
         return NULL;
     }
 
+    for (int i = 0; i < info->nb_channels; i++) {
+        if (adc_channel_setup(info->dev, &info->channels[i].cfg) != 0) {
+            LOG_ERR("Failed to setup ADC channel %d", info->channels[i].id);
+            return NULL;
+        }
+    }
+ 
     alloc_size = sizeof(*adc) ;
 
     adc = k_malloc(alloc_size);

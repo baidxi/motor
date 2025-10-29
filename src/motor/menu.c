@@ -113,7 +113,7 @@ static struct menu_item_t motor_pwm_freq_item = {
 };
 
 static struct menu_item_t motor_voltage_item = {
-   .name = "Motor Voltage",
+   .name = "Voltage",
    .id = 8,
    .style = MENU_STYLE_NORMAL,
    .type = MENU_ITEM_TYPE_INPUT_MIN_MAX,

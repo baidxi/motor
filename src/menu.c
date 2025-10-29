@@ -101,6 +101,11 @@ static void startup_checkbox_cb(struct menu_item_t *item, bool is_on)
 {
     LOG_INF("Startup is now %s", is_on ? "ON" : "OFF");
     menu_disable_qdec(item->menu, is_on);
+
+    /* TODO */
+    /* 根据 mc_motor_ready 函数返回，是否显示错误提示
+       给menu添加实现错误、信息、警告对话框实现
+    */
     mc_motor_ready(menu_driver_get(item->menu), is_on);
 }
 
@@ -139,7 +144,8 @@ static struct menu_item_t setup_power_item = {
 static struct menu_item_t voltage_item = {
     .name = "vbus",
     .id = 10,
-    .style = MENU_STYLE_NORMAL | MENU_STYLE_LABEL,
+    .style = MENU_STYLE_NORMAL,
+    .type = MENU_ITEM_TYPE_LABEL,
     .label_cb = menu_item_label_vbus_cb,
     .visible = true,
 };

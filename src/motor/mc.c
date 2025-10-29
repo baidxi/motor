@@ -21,10 +21,20 @@ struct mc_t {
 
 LOG_MODULE_REGISTER(mc, LOG_LEVEL_INF);
 
+bool mc_motor_voltage_check(struct mc_t *mc)
+{
+    if (mc->vbus > mc->motor.voltage_max || mc->vbus < mc->motor.voltage_min)
+    {
+        return false;
+    }
+
+    return true;
+}
+
 static void vbus_adc_value_cb(struct adc_callback_t *self, uint16_t *values, size_t count, void *param)
 {
     struct mc_t *mc = CONTAINER_OF(self, struct mc_t, callback);
-    uint16_t value = 0;
+    double value = 0.0;
     uint32_t sum = 0;
     count = count / sizeof(uint16_t);
     int i;
@@ -34,24 +44,11 @@ static void vbus_adc_value_cb(struct adc_callback_t *self, uint16_t *values, siz
         sum += values[i];
     }
 
-    value = sum / count;
+    value = (double)(sum / count);
 
     mc->vbus_raw = value;
 
-    /*
-     * According to the schematic:
-     * VBUS is connected to a voltage divider with R3=47K and R4=2K.
-     * VBUS_SENSE = VBUS * (R4 / (R3 + R4)) = VBUS * (2 / 49)
-     * VBUS = VBUS_SENSE * 24.5
-     *
-     * ADC converts VBUS_SENSE to a digital value.
-     * Assuming VREF=3.3V and 12-bit resolution (4096 levels).
-     * VBUS_SENSE = (adc_raw / 4095) * VREF
-     *
-     * To store in millivolts (uint16_t):
-     * VBUS_mV = ((adc_raw / 4095.0f) * 3300.0f) * 24.5f
-     */
-    mc->vbus = ((float)value / 4095.0f) * 3300.0f * 24.5f;
+    mc->vbus = ((float)value / 4095.0f) * 3300.0f * (104.7f / 4.7f);
 }
 
 void mc_motor_voltage_range_set(struct mc_t *mc, int min, int max)
@@ -130,12 +127,16 @@ int mc_motor_count(struct mc_t *mc)
     return mc->nb_motor;
 }
 
-void mc_motor_ready(struct mc_t *mc, bool is_ready)
+bool mc_motor_ready(struct mc_t *mc, bool is_ready)
 {
     int i;
 
     if (is_ready)
     {
+        if (!mc_motor_voltage_check(mc))
+        {
+            return false;
+        }
         for (i = 0; i < mc->nb_motor; i++)
         {
             motor_ready(mc->motors[i]);           
@@ -146,6 +147,8 @@ void mc_motor_ready(struct mc_t *mc, bool is_ready)
             motor_idle(mc->motors[i]);
         }
     }
+
+    return true;
 }
 
 double mc_vbus_get(struct mc_t *mc)
