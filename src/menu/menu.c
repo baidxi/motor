@@ -762,15 +762,19 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                             force_render = true;
                             break;
                         case MENU_ITEM_TYPE_CHECKBOX:
-                            menu->current_item->checkbox.is_on = !menu->current_item->checkbox.is_on;
+                            bool target_state = !menu->current_item->checkbox.is_on;
                             if (menu->current_item->checkbox.cb) {
                                 k_mutex_unlock(&menu->state_mutex);
-                                menu->current_item->checkbox.cb(menu->current_item, menu->current_item->checkbox.is_on);
+                                bool cb_result = menu->current_item->checkbox.cb(menu->current_item, target_state);
                                 k_mutex_lock(&menu->state_mutex, K_FOREVER);
+                                
                                 if (menu->dialog_item) {
                                     k_mutex_unlock(&menu->state_mutex);
                                     return;
                                 }
+                                menu->current_item->checkbox.is_on = cb_result;
+                            } else {
+                                menu->current_item->checkbox.is_on = target_state;
                             }
                             menu->item_to_refresh = menu->current_item;
                             break;

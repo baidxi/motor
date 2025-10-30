@@ -12,8 +12,8 @@ LOG_MODULE_DECLARE(menu, CONFIG_LOG_DEFAULT_LEVEL);
 extern void motor_ctrl(void *ctrl, bool enable);
 extern void menu_driver_start(struct menu_t *menu, void (*start)(void *, bool), bool en);
 static int menu_item_label_vbus_cb(struct menu_item_t *item, char *buf, size_t len);
-static void startup_checkbox_cb(struct menu_item_t *item, bool is_on);
-static void startup_confirm_cb(struct menu_item_t *item, bool confirmed);
+static bool startup_checkbox_cb(struct menu_item_t *item, bool is_on);
+// static void startup_confirm_cb(struct menu_item_t *item, bool confirmed);
 
 static struct menu_item_t setup_item = {
     .name = "Setup",
@@ -58,25 +58,32 @@ static struct menu_item_t startup_item = {
     .visible = true,
 };
 
-static void startup_confirm_cb(struct menu_item_t *item, bool confirmed)
-{
-    if (confirmed) {
-        LOG_INF("User confirmed startup. Disabling QDEC and starting motor.");
-        menu_disable_qdec(item->menu, true);
-        mc_motor_ready(menu_driver_get(item->menu), true);
-    } else {
-        LOG_INF("User canceled startup.");
-    }
-}
+// static void startup_confirm_cb(struct menu_item_t *item, bool confirmed)
+// {
+//     if (confirmed) {
+//         LOG_INF("User confirmed startup. Disabling QDEC and starting motor.");
+//         menu_disable_qdec(item->menu, true);
+//         mc_motor_ready(menu_driver_get(item->menu), true);
+//     } else {
+//         LOG_INF("User canceled startup.");
+//     }
+// }
 
-static void startup_checkbox_cb(struct menu_item_t *item, bool is_on)
+static bool startup_checkbox_cb(struct menu_item_t *item, bool is_on)
 {
+    bool success;
+
     if (is_on) {
-        menu_dialog_show(item->menu, DIALOG_STYLE_CONFIRM, "Confirm", startup_confirm_cb, "Start motor?");
+        success = mc_motor_ready(menu_driver_get(item->menu), true);
+        if (success) {
+            menu_disable_qdec(item->menu, true);
+        }
+        return success;
     } else {
         LOG_INF("Motor stopping.");
         mc_motor_ready(menu_driver_get(item->menu), false);
         menu_disable_qdec(item->menu, false); /* Re-enable encoder */
+        return false;
     }
 }
 

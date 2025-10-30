@@ -6,6 +6,8 @@
 #include <motor/adc.h>
 #include <motor/motor.h>
 
+#include <menu/menu.h>
+
 struct mc_t {
     struct motor_t **motors;
     int nb_motor;
@@ -17,11 +19,12 @@ struct mc_t {
         uint32_t voltage_min;
         uint32_t voltage_max;
     } motor;
+    struct menu_t *menu;
 };
 
 LOG_MODULE_REGISTER(mc, LOG_LEVEL_INF);
 
-bool mc_motor_voltage_check(struct mc_t *mc)
+static bool mc_motor_voltage_check(struct mc_t *mc)
 {
     if (mc->vbus > mc->motor.voltage_max || mc->vbus < mc->motor.voltage_min)
     {
@@ -135,6 +138,7 @@ bool mc_motor_ready(struct mc_t *mc, bool is_ready)
     {
         if (!mc_motor_voltage_check(mc))
         {
+            menu_dialog_show(mc->menu, DIALOG_STYLE_ERR, "voltage err", NULL, "voltage %dV - %dV", mc->motor.voltage_min / 1000, mc->motor.voltage_max / 1000);
             return false;
         }
         for (i = 0; i < mc->nb_motor; i++)
@@ -154,4 +158,9 @@ bool mc_motor_ready(struct mc_t *mc, bool is_ready)
 double mc_vbus_get(struct mc_t *mc)
 {
     return mc->vbus;
+}
+
+void mc_menu_bind(struct menu_t *menu, struct mc_t *mc)
+{
+    mc->menu = menu;
 }

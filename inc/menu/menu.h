@@ -34,7 +34,7 @@ typedef int (*menu_item_label_cb)(struct menu_item_t *item, char *buf, size_t le
 
 typedef bool (*menu_item_input_cb_t)(struct menu_item_t *item, menu_input_event_t *event);
 typedef void (*menu_item_switch_cb_t)(struct menu_item_t *item, bool is_on);
-typedef void (*menu_item_checkbox_cb_t)(struct menu_item_t *item, bool is_on);
+typedef bool (*menu_item_checkbox_cb_t)(struct menu_item_t *item, bool is_on);
 
 typedef enum {
    DIALOG_STYLE_INFO,

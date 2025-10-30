@@ -116,6 +116,8 @@ int main(void)
 
     mc = mc_init(MOTOR_TYPE_BLDC, 1);
 
+    mc_menu_bind(menu, mc);
+
     if (mc_svpwm_init(mc, &svpwm_info, 0))
     {
         return -1;

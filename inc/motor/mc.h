@@ -21,4 +21,5 @@ int mc_motor_count(struct mc_t *mc);
 bool mc_motor_ready(struct mc_t *mc, bool is_ready);
 void mc_motor_voltage_range_set(struct mc_t *mc, int min, int max);
 double mc_vbus_get(struct mc_t *mc);
-bool mc_motor_voltage_check(struct mc_t *mc);
+void mc_menu_bind(struct menu_t *menu, struct mc_t *mc);
+
