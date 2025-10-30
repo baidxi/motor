@@ -9,6 +9,7 @@
 
 #include <menu/menu.h>
 #include <menu/pannel.h>
+#include <stdarg.h>
 
 LOG_MODULE_REGISTER(menu, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -52,8 +53,13 @@ struct menu_t {
     void *driver;
     struct k_timer label_refresh_timer;
     struct k_work label_refresh_work;
+   struct menu_item_t dialog_item_storage;
+   struct menu_item_t *dialog_item;
+   uint8_t dialog_selected_button;
 };
 
+static void menu_render_dialog(struct menu_t *menu, struct menu_item_t *item);
+static void menu_process_dialog_input(struct menu_t *menu, menu_input_event_t *event);
 static void label_refresh_work_handler(struct k_work *work);
 static struct menu_item_t *find_menu_item_by_id(struct menu_item_t *root, uint8_t id);
 static void menu_get_item_layout(struct menu_group_t *group, struct menu_item_t *item_to_find, uint16_t *out_x, uint16_t *out_y, uint16_t *out_w);
@@ -155,6 +161,11 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
         content_width += 1 + strlen(label_buf) * CONFIG_FONT_WIDTH;
     } else if (item->type == MENU_ITEM_TYPE_SWITCH) {
         content_width += 5 + strlen("OFF") * CONFIG_FONT_WIDTH;
+    } else if (item->type == MENU_ITEM_TYPE_CHECKBOX) {
+        const char *checkbox_str = item->checkbox.is_on ?
+                                    (item->checkbox.text_on ? item->checkbox.text_on : "ON") :
+                                    (item->checkbox.text_off ? item->checkbox.text_off : "OFF");
+        content_width += 1 + strlen(checkbox_str) * CONFIG_FONT_WIDTH;
     }
 
     uint16_t box_width = (render_width > 0) ? render_width : content_width;
@@ -166,7 +177,9 @@ static void menu_render_item(struct menu_t *menu, struct menu_item_t *item,
     uint16_t text_x = x;
     if (item->group && item->group->item_text_align) {
          if (item->group->item_text_align & MENU_STYLE_CENTER) {
-            text_x = x + (box_width - content_width) / 2;
+            if (content_width < box_width) {
+                text_x = x + (box_width - content_width) / 2;
+            }
         } else if (item->group->item_text_align & MENU_STYLE_RIGHT) {
             text_x = x + box_width - content_width;
         }
@@ -446,6 +459,13 @@ static void menu_render(struct menu_t *menu)
         return;
     }
 
+   if (menu->dialog_item) {
+       k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+       menu_render_dialog(menu, menu->dialog_item);
+       k_mutex_unlock(&menu->pannel_mutex);
+       return;
+   }
+
     pannel_get_capabilities(menu->pannel, &caps);
     
     pannel_render_clear(menu->pannel, COLOR_BLACK);
@@ -511,6 +531,12 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
 
     k_mutex_lock(&menu->state_mutex, K_FOREVER);
     
+   if (menu->dialog_item) {
+       menu_process_dialog_input(menu, event);
+       k_mutex_unlock(&menu->state_mutex);
+       return;
+   }
+
     last_item = menu->current_item;
     
     switch (event->type) {
@@ -738,7 +764,13 @@ static void menu_process_input(struct menu_t *menu, menu_input_event_t *event)
                         case MENU_ITEM_TYPE_CHECKBOX:
                             menu->current_item->checkbox.is_on = !menu->current_item->checkbox.is_on;
                             if (menu->current_item->checkbox.cb) {
+                                k_mutex_unlock(&menu->state_mutex);
                                 menu->current_item->checkbox.cb(menu->current_item, menu->current_item->checkbox.is_on);
+                                k_mutex_lock(&menu->state_mutex, K_FOREVER);
+                                if (menu->dialog_item) {
+                                    k_mutex_unlock(&menu->state_mutex);
+                                    return;
+                                }
                             }
                             menu->item_to_refresh = menu->current_item;
                             break;
@@ -942,6 +974,11 @@ static void label_refresh_work_handler(struct k_work *work)
 
     k_mutex_lock(&menu->state_mutex, K_FOREVER);
 
+    if (menu->dialog_item) {
+        k_mutex_unlock(&menu->state_mutex);
+        return;
+    }
+
     group = menu->groups;
     while (group) {
         if (group->visible) {
@@ -950,11 +987,6 @@ static void label_refresh_work_handler(struct k_work *work)
                 if (item->visible && item->type == MENU_ITEM_TYPE_LABEL && item->label_cb) {
                     item->label_cb(item, new_label_buf, sizeof(new_label_buf));
                     if (strcmp(new_label_buf, item->label.rendered_label_str) != 0) {
-                        /*
-                         * Data has changed. Queue an update request for the UI thread.
-                         * DO NOT call rendering functions from this worker thread.
-                         * The value in the message (0) is ignored for LABEL types.
-                         */
                         menu_item_queue_update(item, 0);
                     }
                 }
@@ -1054,7 +1086,8 @@ static void menu_state_machine_func(void *v1, void *v2, void *v3)
                 struct menu_update_msg msg;
                 if (k_msgq_get(&menu->update_msgq, &msg, K_NO_WAIT) == 0) {
                     k_mutex_lock(&menu->state_mutex, K_FOREVER);
-                    if (msg.item && msg.item != menu->editing_item) {
+                    /* Only process item updates if no dialog is active */
+                    if (menu->dialog_item == NULL && msg.item && msg.item != menu->editing_item) {
                         if (msg.item->type == MENU_ITEM_TYPE_INPUT) {
                             msg.item->input.value = msg.value;
                         }
@@ -1720,6 +1753,186 @@ void menu_driver_bind(struct menu_t *menu, void *driver)
 void *menu_driver_get(struct menu_t *menu)
 {
     return menu->driver;
+}
+
+static void menu_render_dialog(struct menu_t *menu, struct menu_item_t *item)
+{
+   if (!menu || !item) {
+       return;
+   }
+
+   struct display_capabilities *caps;
+   pannel_get_capabilities(menu->pannel, &caps);
+
+   uint16_t box_w = caps->x_resolution * 0.8;
+   uint16_t box_h = caps->y_resolution * 0.6;
+   uint16_t box_x = (caps->x_resolution - box_w) / 2;
+   uint16_t box_y = (caps->y_resolution - box_h) / 2;
+
+   pannel_render_rect(menu->pannel, box_x, box_y, box_w, box_h, COLOR_WHITE, false);
+   pannel_render_rect(menu->pannel, box_x + 1, box_y + 1, box_w - 2, box_h - 2, COLOR_BLACK, true);
+
+   if (item->dialog.title[0] != '\0') {
+       uint16_t title_len = strlen(item->dialog.title);
+       uint16_t title_width = title_len * CONFIG_FONT_WIDTH;
+       uint16_t title_x = box_x + (box_w - title_width) / 2;
+       pannel_render_txt(menu->pannel, (uint8_t *)item->dialog.title, title_x, box_y + 5, COLOR_YELLOW);
+   }
+
+   uint16_t msg_len = strlen(item->dialog.msg);
+   uint16_t msg_width = msg_len * CONFIG_FONT_WIDTH;
+   uint16_t msg_x = box_x + (box_w - msg_width) / 2;
+   pannel_render_txt(menu->pannel, (uint8_t *)item->dialog.msg, msg_x, box_y + 20, COLOR_WHITE);
+
+   uint16_t btn_y = box_y + box_h - CONFIG_FONT_HEIGHT - 10;
+   if (item->dialog.style == DIALOG_STYLE_CONFIRM) {
+       const char *ok_text = "OK";
+       const char *cancel_text = "Cancel";
+       uint16_t ok_width = strlen(ok_text) * CONFIG_FONT_WIDTH + 8;
+       uint16_t cancel_width = strlen(cancel_text) * CONFIG_FONT_WIDTH + 8;
+       uint16_t total_width = ok_width + cancel_width + 20; // 20 for spacing
+       uint16_t start_x = box_x + (box_w - total_width) / 2;
+
+       pannel_render_rect(menu->pannel, start_x, btn_y, cancel_width, CONFIG_FONT_HEIGHT + 4, menu->dialog_selected_button == 1 ? COLOR_WHITE : COLOR_BLACK, true);
+       pannel_render_txt(menu->pannel, (uint8_t *)cancel_text, start_x + 4, btn_y + 2, menu->dialog_selected_button == 1 ? COLOR_BLACK : COLOR_WHITE);
+
+       start_x += cancel_width + 20;
+       pannel_render_rect(menu->pannel, start_x, btn_y, ok_width, CONFIG_FONT_HEIGHT + 4, menu->dialog_selected_button == 0 ? COLOR_WHITE : COLOR_BLACK, true);
+       pannel_render_txt(menu->pannel, (uint8_t *)ok_text, start_x + 4, btn_y + 2, menu->dialog_selected_button == 0 ? COLOR_BLACK : COLOR_WHITE);
+
+   } else { 
+       const char *ok_text = "OK";
+       uint16_t btn_width = strlen(ok_text) * CONFIG_FONT_WIDTH + 8;
+       uint16_t btn_x = box_x + (box_w - btn_width) / 2;
+       pannel_render_rect(menu->pannel, btn_x, btn_y, btn_width, CONFIG_FONT_HEIGHT + 4, COLOR_WHITE, true);
+       pannel_render_txt(menu->pannel, (uint8_t *)ok_text, btn_x + 4, btn_y + 2, COLOR_BLACK);
+   }
+}
+
+static void menu_process_dialog_input(struct menu_t *menu, menu_input_event_t *event)
+{
+   struct menu_item_t *dialog = menu->dialog_item;
+   bool close_dialog = false;
+   bool confirmed = false;
+
+   switch (event->type) {
+      case INPUT_TYPE_QDEC:
+      case INPUT_TYPE_KEY5: // LEFT
+      case INPUT_TYPE_KEY6: // RIGHT
+      {
+          if (dialog->dialog.style != DIALOG_STYLE_CONFIRM) {
+              break;
+          }
+          if (event->type != INPUT_TYPE_QDEC && !event->pressed) {
+              break; // Only handle key presses, not releases
+          }
+
+          uint8_t old_selection = menu->dialog_selected_button;
+          uint8_t new_selection = old_selection;
+
+          if (event->type == INPUT_TYPE_QDEC) {
+              new_selection = !old_selection;
+          } else if (event->type == INPUT_TYPE_KEY5) { // LEFT
+              new_selection = 1; // 1 is Cancel
+          } else { // RIGHT
+              new_selection = 0; // 0 is OK
+          }
+
+          if (new_selection != old_selection) {
+              menu->dialog_selected_button = new_selection;
+
+              k_mutex_lock(&menu->pannel_mutex, K_FOREVER);
+
+              struct display_capabilities *caps;
+              pannel_get_capabilities(menu->pannel, &caps);
+              uint16_t box_w = caps->x_resolution * 0.8;
+              uint16_t box_h = caps->y_resolution * 0.6;
+              uint16_t box_x = (caps->x_resolution - box_w) / 2;
+              uint16_t box_y = (caps->y_resolution - box_h) / 2;
+              uint16_t btn_y = box_y + box_h - CONFIG_FONT_HEIGHT - 10;
+              const char *ok_text = "OK";
+              const char *cancel_text = "Cancel";
+              uint16_t ok_width = strlen(ok_text) * CONFIG_FONT_WIDTH + 8;
+              uint16_t cancel_width = strlen(cancel_text) * CONFIG_FONT_WIDTH + 8;
+              uint16_t total_width = ok_width + cancel_width + 20;
+              uint16_t cancel_x = box_x + (box_w - total_width) / 2;
+              uint16_t ok_x = cancel_x + cancel_width + 20;
+
+              pannel_render_rect(menu->pannel, cancel_x, btn_y, cancel_width, CONFIG_FONT_HEIGHT + 4, (new_selection == 1) ? COLOR_WHITE : COLOR_BLACK, true);
+              pannel_render_txt(menu->pannel, (uint8_t *)cancel_text, cancel_x + 4, btn_y + 2, (new_selection == 1) ? COLOR_BLACK : COLOR_WHITE);
+
+              pannel_render_rect(menu->pannel, ok_x, btn_y, ok_width, CONFIG_FONT_HEIGHT + 4, (new_selection == 0) ? COLOR_WHITE : COLOR_BLACK, true);
+              pannel_render_txt(menu->pannel, (uint8_t *)ok_text, ok_x + 4, btn_y + 2, (new_selection == 0) ? COLOR_BLACK : COLOR_WHITE);
+
+              k_mutex_unlock(&menu->pannel_mutex);
+          }
+      }
+      break;
+
+       case INPUT_TYPE_KEY1: // Enter
+           if (event->pressed) {
+               close_dialog = true;
+               confirmed = (menu->dialog_selected_button == 0); // OK is button 0
+           }
+           break;
+
+       case INPUT_TYPE_KEY2: // Back/Esc
+           if (event->pressed) {
+               close_dialog = true;
+               confirmed = false; // Always cancel on back
+           }
+           break;
+       
+       default:
+           break;
+   }
+
+   if (close_dialog) {
+       if (dialog->dialog.cb) {
+           dialog->dialog.cb(dialog, confirmed);
+       }
+       menu->dialog_item = NULL;
+       menu->needs_render = true;
+       k_sem_give(&menu->render_sem);
+   }
+}
+
+int menu_dialog_show(struct menu_t *menu, menu_dialog_style_t style, const char *title, menu_dialog_confirm_cb_t cb, const char *fmt, ...)
+{
+   if (!menu) {
+       return -EINVAL;
+   }
+
+   k_mutex_lock(&menu->state_mutex, K_FOREVER);
+
+   struct menu_item_t *dialog = &menu->dialog_item_storage;
+   dialog->menu = menu;
+   dialog->type = MENU_ITEM_TYPE_DIALOG;
+   dialog->visible = true;
+   dialog->dialog.style = style;
+   dialog->dialog.cb = cb;
+
+   if (title) {
+       strncpy(dialog->dialog.title, title, sizeof(dialog->dialog.title) - 1);
+       dialog->dialog.title[sizeof(dialog->dialog.title) - 1] = '\0';
+   } else {
+       dialog->dialog.title[0] = '\0';
+   }
+
+   va_list args;
+   va_start(args, fmt);
+   vsnprintf(dialog->dialog.msg, sizeof(dialog->dialog.msg), fmt, args);
+   va_end(args);
+
+   menu->dialog_item = dialog;
+   menu->dialog_selected_button = 0; // Default to the first button (OK)
+
+   menu->needs_render = true;
+   k_sem_give(&menu->render_sem);
+
+   k_mutex_unlock(&menu->state_mutex);
+
+   return 0;
 }
 
 void menu_driver_start(struct menu_t *menu, void (*start)(void *, bool), bool en)

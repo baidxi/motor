@@ -48,7 +48,7 @@ static void vbus_adc_value_cb(struct adc_callback_t *self, uint16_t *values, siz
 
     mc->vbus_raw = value;
 
-    mc->vbus = ((float)value / 4095.0f) * 3300.0f * (104.7f / 4.7f);
+    mc->vbus = ((float)value / 4095.0f) * 3.3f * (104.7f / 4.7f);
 }
 
 void mc_motor_voltage_range_set(struct mc_t *mc, int min, int max)

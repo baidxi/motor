@@ -186,7 +186,6 @@ void mc_setup_menu_bind(struct mc_t *mc, struct menu_t *menu)
     menu_group_add_item(motor_group, &motor_type_item);
     menu_group_add_item(motor_group, &motor_voltage_item);
 
-    // menu_group_add_item(motor_group, &motor_mode_item);
     menu_group_bind_item(motor_group, &setup_motor_item);
 
     speed_event_callback.param = &motor_speed_item;

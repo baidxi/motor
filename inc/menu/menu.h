@@ -36,6 +36,15 @@ typedef bool (*menu_item_input_cb_t)(struct menu_item_t *item, menu_input_event_
 typedef void (*menu_item_switch_cb_t)(struct menu_item_t *item, bool is_on);
 typedef void (*menu_item_checkbox_cb_t)(struct menu_item_t *item, bool is_on);
 
+typedef enum {
+   DIALOG_STYLE_INFO,
+   DIALOG_STYLE_ERR,
+   DIALOG_STYLE_WARN,
+   DIALOG_STYLE_CONFIRM,
+} menu_dialog_style_t;
+
+typedef void (*menu_dialog_confirm_cb_t)(struct menu_item_t *item, bool confirmed);
+
 // 菜单样式定义
 #define MENU_STYLE_NORMAL        0x00000001  // 普通样式
 #define MENU_STYLE_HIGHLIGHT      0x00000002  // 高亮样式
@@ -95,6 +104,7 @@ typedef enum {
     MENU_ITEM_TYPE_CHECKBOX,
     MENU_ITEM_TYPE_INPUT_MIN_MAX,
     MENU_ITEM_TYPE_LABEL,
+   MENU_ITEM_TYPE_DIALOG,
 } menu_item_type_t;
 
 #define ADC_FILTER_WINDOW_SIZE 10
@@ -166,6 +176,12 @@ struct menu_item_t {
             char rendered_label_str[32];
         } label;
     };
+   struct item_dialog_t {
+       char title[32];
+       char msg[128];
+       menu_dialog_style_t style;
+       menu_dialog_confirm_cb_t cb;
+   } dialog;
     struct item_input_min_max_t {
         int32_t min_value;
         int32_t max_value;
@@ -227,3 +243,4 @@ extern void menu_driver_bind(struct menu_t *menu, void *driver);
 extern int menu_init(const struct device *dev, struct menu_t **out);
 extern void menu_driver_start(struct menu_t *menu, void (*start)(void *, bool), bool en);
 extern void *menu_driver_get(struct menu_t *menu);
+extern int menu_dialog_show(struct menu_t *menu, menu_dialog_style_t style, const char *title, menu_dialog_confirm_cb_t cb, const char *fmt, ...);
