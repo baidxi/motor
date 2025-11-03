@@ -8,12 +8,6 @@
 
 #include <menu/menu.h>
 
-struct mc_adc_info {
-    uint16_t raw_value;
-    double value;
-    struct adc_callback_t cb;
-};
-
 struct mc_t {
     struct motor_t **motors;
     int nb_motor;
@@ -23,14 +17,14 @@ struct mc_t {
         uint32_t voltage_max;
     } motor;
     struct menu_t *menu;
-    struct mc_adc_info ia, ic, va, vb, vc, vbus;
+    struct mc_adc_info adc_info[6];
 };
 
 LOG_MODULE_REGISTER(mc, LOG_LEVEL_INF);
 
 static bool mc_motor_voltage_check(struct mc_t *mc)
 {
-    if (mc->vbus.value > mc->motor.voltage_max || mc->vbus.value < mc->motor.voltage_min)
+    if (mc->adc_info[VOLTAGE_BUS].value > mc->motor.voltage_max || mc->adc_info[VOLTAGE_BUS].value < mc->motor.voltage_min)
     {
         return false;
     }
@@ -66,6 +60,15 @@ static void mc_adc_callback_entry(struct adc_callback_t *self, uint16_t *values,
         case VOLTAGE_BUS:
             info->value = ((float)value / 4095.0f) * 3.3f * (104.7f / 4.7f);
             break;
+        case CURR_A:
+        case CURR_C:
+            info->value = 60.0f * (((float)value / 4095.0f) - 0.5f);
+            break;
+        case BEMF_A:
+        case BEMF_B:
+        case BEMF_C:
+            info->value = ((float)value / 4095.0f) * 3.3f * 11.0f;
+            break;
     }
 }
 
@@ -76,31 +79,21 @@ struct mc_t *mc_init(uint8_t type, int nb_motor)
 
     mc->motors = k_malloc(sizeof(void *) * nb_motor);
 
+    memset(mc->adc_info, 0, sizeof(mc->adc_info));
+
     for (i = 0; i < nb_motor; i++)
     {
-        mc->motors[i] = motor_init(mc, type, i);
+        mc->motors[i] = motor_init(mc, mc->adc_info,  type, i);
     }
 
-    mc->vbus.raw_value = 0;
+    for (i = 0; i < 6; i++)
+    {
+        mc->adc_info[i].cb.func = mc_adc_callback_entry;
+        mc->adc_info[i].cb.id = i;
+    }
 
     mc->nb_motor = nb_motor;
 
-    mc->vbus.cb.func = mc_adc_callback_entry,
-    mc->vbus.cb.id = VOLTAGE_BUS,
-
-    mc->ia.cb.id = CURR_A;
-    mc->ia.cb.func = mc_adc_callback_entry;
-    mc->ic.cb.id = CURR_C;
-    mc->ic.cb.func = mc_adc_callback_entry;
-
-    mc->va.cb.id = BEMF_A;
-    mc->va.cb.func = mc_adc_callback_entry;
-
-    mc->vb.cb.id = BEMF_B;
-    mc->vb.cb.func = mc_adc_callback_entry;
-
-    mc->vc.cb.id = BEMF_C;
-    mc->vc.cb.func = mc_adc_callback_entry;
 
     return mc;
 }
@@ -119,17 +112,17 @@ int mc_svpwm_init(struct mc_t *mc, const struct svpwm_info *info, int motor_id)
 
 int mc_adc_init(struct mc_t *mc, const struct adc_info *info)
 {
+    // int i;
     mc->adc = adc_init(info);
 
     if (mc->adc)
-    {
-        adc_register_callback(mc->adc, &mc->vbus.cb);
-        adc_register_callback(mc->adc, &mc->ia.cb);
-        adc_register_callback(mc->adc, &mc->ic.cb);
-        adc_register_callback(mc->adc, &mc->va.cb);
-        adc_register_callback(mc->adc, &mc->vb.cb);
-        adc_register_callback(mc->adc, &mc->vc.cb);
-    }
+        adc_register_callback(mc->adc, &mc->adc_info[VOLTAGE_BUS].cb);
+
+    // if (mc->adc)
+    // {
+    //     for (i = 0; i < 6; i++)
+    //         adc_register_callback(mc->adc, &mc->adc_info[i].cb);
+    // }
 
     return mc->adc ? 0 : -ENODEV;
 }
@@ -184,7 +177,7 @@ bool mc_motor_ready(struct mc_t *mc, bool is_ready)
 
 double mc_vbus_get(struct mc_t *mc)
 {
-    return mc->vbus.value;
+    return mc->adc_info[VOLTAGE_BUS].value;
 }
 
 void mc_menu_bind(struct menu_t *menu, struct mc_t *mc)

@@ -3,12 +3,20 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <motor/adc.h>
+
 struct motor_t;
 struct svpwm_info;
 struct adc_info;
 struct menu_t;
 struct adc_callback_t;
 struct mc_t;
+
+struct mc_adc_info {
+    uint16_t raw_value;
+    double value;
+    struct adc_callback_t cb;
+};
 
 struct mc_t *mc_init(uint8_t type, int nb_motor);
 int mc_svpwm_init(struct mc_t *mc, const struct svpwm_info *info, int motor_id);

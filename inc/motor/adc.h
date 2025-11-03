@@ -31,9 +31,9 @@ enum channel_id {
     BEMF_B,
     BEMF_C,
     VOLTAGE_BUS,
-    SPEED_VALUE,
     CURR_A,
     CURR_C,
+    SPEED_VALUE,
 };
 
 struct adc_t *adc_init(const struct adc_info *info);

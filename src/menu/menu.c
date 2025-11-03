@@ -1171,6 +1171,8 @@ static char g_update_msgq_buffer[MENU_UPDATE_MSGQ_MAX_MSGS * sizeof(struct menu_
 struct menu_t *menu_create(const struct device *render_dev)
 {
     struct menu_t *menu = &local_menu;
+
+    menu->tid = NULL;
         
     menu->pannel = pannel_create(render_dev);
     if (!menu->pannel)
@@ -1198,6 +1200,9 @@ struct menu_t *menu_create(const struct device *render_dev)
             MENU_STACK_SIZE,
             menu_state_machine_func,
             menu, NULL, NULL, 5, 0, K_FOREVER);
+   if (menu->tid == NULL) {
+       LOG_ERR("Failed to create menu thread");
+   }
 
     return menu;
 }

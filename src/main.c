@@ -47,17 +47,17 @@ static const struct adc_channel_info adc_channels[] = {
         .id = VOLTAGE_BUS,
     },
     {
-        .cfg = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_ALIAS(adc2), channel_12)),
-        .id = SPEED_VALUE,
-    },
-    {
         .cfg = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_ALIAS(adc2), channel_3)),
         .id = CURR_A,
     },
     {
         .cfg = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_ALIAS(adc2), channel_17)),
         .id = CURR_C,
-    }
+    },
+    {
+        .cfg = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_ALIAS(adc2), channel_12)),
+        .id = SPEED_VALUE,
+    },
 };
 
 static const struct svpwm_info svpwm_info = {

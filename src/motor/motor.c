@@ -18,6 +18,7 @@ struct motor_t {
     K_KERNEL_STACK_MEMBER(stack, MOTOR_THREAD_STACK_SIZE);
     struct k_event event;
     struct mc_t *mc;
+    struct mc_adc_info *adc;
 };
 
 enum motor_state_t {
@@ -62,13 +63,14 @@ static void motor_thread_func(void *v1, void *v2, void *v3)
     }
 }
 
-struct motor_t *motor_init(struct mc_t *mc, uint8_t type, uint8_t id)
+struct motor_t *motor_init(struct mc_t *mc, struct mc_adc_info *adc, uint8_t type, uint8_t id)
 {
     struct motor_t *motor = k_malloc(sizeof(*motor));
     motor->type = type;
     motor->id = id;
     motor->state = MOTOR_STATE_IDLE;
     motor->mc = mc;
+    motor->adc = adc;
 
     k_event_init(&motor->event);
 
